@@ -1,0 +1,1155 @@
+:root {
+	--bg-0: #0a0f1c;
+	--bg-1: #101728;
+	--bg-2: #172033;
+	--bg-3: #1f2a42;
+	--line: #2a3756;
+	--line-2: #3a4a70;
+	--ink: #e9eef9;
+	--ink-dim: #a8b5d1;
+	--muted: #6c7a99;
+	--accent: #5b8def;
+	--accent-2: #7c5cff;
+	--ok: #34d399;
+	--warn: #fbbf24;
+	--err: #f87171;
+	--info: #38bdf8;
+	--wire: #5dd5ff;
+	--wire-bus: #c084fc;
+	--wire-sel: #fde68a;
+	--gate-fill: #1d2940;
+	--gate-stroke: #9bb0d8;
+	--in-fill: #14342a;
+	--in-stroke: #34d399;
+	--in-text: #bff0db;
+	--out-fill: #3a1f2b;
+	--out-stroke: #f87171;
+	--out-text: #ffd2dc;
+	--grid: #1a2336;
+	--grid-dot: #2a3553;
+	--sh-1: 0 1px 2px #0006;
+	--sh-2: 0 6px 22px #000a;
+	--sh-3: 0 16px 40px #000b;
+}
+
+* {
+	box-sizing: border-box
+}
+
+html,
+body {
+	margin: 0;
+	height: 100%;
+	background: var(--bg-0);
+	color: var(--ink);
+	font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+	font-size: 13px;
+	overflow: hidden;
+	-webkit-font-smoothing: antialiased;
+	user-select: none;
+	-webkit-user-select: none;
+	-moz-user-select: none
+}
+
+/* text can only be highlighted where it's actually needed: editable fields and
+   the generated-code panel (so it can still be copied by selection) */
+input,
+select,
+textarea,
+[contenteditable="true"],
+#vhdlOutput {
+	user-select: text;
+	-webkit-user-select: text;
+	-moz-user-select: text
+}
+
+button {
+	font-family: inherit;
+	font-size: inherit
+}
+
+input,
+select,
+textarea {
+	font-family: inherit;
+	color: var(--ink);
+	background: var(--bg-2);
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	padding: 6px 9px;
+	outline: none
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+	border-color: var(--accent)
+}
+
+.mono {
+	font-family: "JetBrains Mono", "Consolas", monospace
+}
+
+/* ---------- Layout ---------- */
+#app {
+	display: grid;
+	grid-template-rows: 46px 1fr 24px;
+	height: 100vh
+}
+
+.topbar {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 0 14px;
+	background: linear-gradient(180deg, #161f33, #101728);
+	border-bottom: 1px solid var(--line);
+	position: relative;
+	z-index: 50
+}
+
+.brand {
+	font-weight: 700;
+	font-size: 14px;
+	letter-spacing: .3px;
+	background: linear-gradient(135deg, #7c5cff, #5dd5ff);
+	-webkit-background-clip: text;
+	background-clip: text;
+	color: transparent;
+	padding-right: 8px;
+	border-right: 1px solid var(--line)
+}
+
+.menu {
+	display: flex;
+	gap: 2px
+}
+
+.menu>.mi {
+	position: relative
+}
+
+.menu>.mi>button {
+	background: transparent;
+	border: none;
+	color: var(--ink-dim);
+	padding: 6px 10px;
+	border-radius: 6px;
+	cursor: pointer;
+	font-weight: 500
+}
+
+.menu>.mi>button:hover,
+.menu>.mi.open>button {
+	background: var(--bg-2);
+	color: var(--ink)
+}
+
+.dd {
+	position: absolute;
+	top: 100%;
+	left: 0;
+	min-width: 200px;
+	background: var(--bg-2);
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	box-shadow: var(--sh-2);
+	padding: 5px;
+	display: none;
+	z-index: 100
+}
+
+.menu>.mi.open .dd {
+	display: block
+}
+
+.dd button {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	background: transparent;
+	border: none;
+	color: var(--ink);
+	padding: 7px 10px;
+	border-radius: 5px;
+	cursor: pointer;
+	text-align: left
+}
+
+.dd button:hover {
+	background: var(--bg-3)
+}
+
+.dd .kbd {
+	margin-left: auto;
+	color: var(--muted);
+	font-size: 11px;
+	font-family: "JetBrains Mono", monospace
+}
+
+.dd hr {
+	border: none;
+	border-top: 1px solid var(--line);
+	margin: 4px 2px
+}
+
+.grow {
+	flex: 1
+}
+
+.btn {
+	background: var(--bg-2);
+	color: var(--ink);
+	border: 1px solid var(--line);
+	padding: 6px 12px;
+	border-radius: 6px;
+	cursor: pointer;
+	font-weight: 500;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px
+}
+
+.btn:hover {
+	border-color: var(--accent);
+	background: var(--bg-3)
+}
+
+.btn-primary {
+	background: linear-gradient(135deg, #5b8def, #7c5cff);
+	border: none;
+	color: white;
+	padding: 7px 14px
+}
+
+.btn-primary:hover {
+	filter: brightness(1.1)
+}
+
+.btn-success {
+	background: linear-gradient(135deg, #10b981, #34d399);
+	border: none;
+	color: #06281c
+}
+
+.btn-ghost {
+	background: transparent;
+	border: none;
+	color: var(--ink-dim);
+	padding: 5px 9px
+}
+
+.btn-ghost:hover {
+	background: var(--bg-2);
+	color: var(--ink)
+}
+
+.proj-name {
+	background: var(--bg-2);
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	padding: 5px 8px;
+	width: 160px
+}
+
+.workspace {
+	display: grid;
+	grid-template-columns: 260px minmax(0, 1fr) 380px;
+	overflow: hidden
+}
+
+@media (max-width:1280px) {
+	.workspace {
+		grid-template-columns: 220px minmax(0, 1fr) 330px
+	}
+}
+
+@media (max-width:1000px) {
+	.workspace {
+		grid-template-columns: 190px minmax(0, 1fr) 290px
+	}
+}
+
+.pane {
+	background: var(--bg-1);
+	border-right: 1px solid var(--line);
+	display: flex;
+	flex-direction: column;
+	overflow: hidden
+}
+
+.pane.right {
+	border-right: none;
+	border-left: 1px solid var(--line)
+}
+
+.pane-tabs {
+	display: flex;
+	background: var(--bg-2);
+	border-bottom: 1px solid var(--line)
+}
+
+.pane-tabs button {
+	flex: 1;
+	background: transparent;
+	border: none;
+	color: var(--ink-dim);
+	padding: 9px;
+	cursor: pointer;
+	font-weight: 500;
+	border-bottom: 2px solid transparent
+}
+
+.pane-tabs button.active {
+	color: var(--ink);
+	border-bottom-color: var(--accent);
+	background: var(--bg-1)
+}
+
+.pane-body {
+	flex: 1;
+	overflow: auto
+}
+
+.pane-body.hidden {
+	display: none
+}
+
+.canvas-area {
+	display: flex;
+	flex-direction: column;
+	background: var(--bg-0);
+	overflow: hidden;
+	position: relative
+}
+
+.sch-tabs {
+	display: flex;
+	align-items: center;
+	background: var(--bg-1);
+	border-bottom: 1px solid var(--line);
+	padding: 0 6px;
+	overflow-x: auto;
+	flex: none;
+	height: 36px
+}
+
+.sch-tab {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 7px 12px;
+	color: var(--ink-dim);
+	background: transparent;
+	border: none;
+	cursor: pointer;
+	border-top: 2px solid transparent;
+	border-bottom: 1px solid transparent;
+	margin: 0 2px;
+	font-weight: 500;
+	white-space: nowrap
+}
+
+.sch-tab.active {
+	color: var(--ink);
+	background: var(--bg-0);
+	border-top-color: var(--accent);
+	border-bottom-color: var(--bg-0)
+}
+
+.sch-tab .close {
+	opacity: .4;
+	padding: 0 3px;
+	border-radius: 3px
+}
+
+.sch-tab .close:hover {
+	opacity: 1;
+	background: var(--err);
+	color: white
+}
+
+.sch-tab.top::before {
+	content: "★";
+	color: var(--warn);
+	margin-right: 4px
+}
+
+.sch-newbtn {
+	background: transparent;
+	border: none;
+	color: var(--muted);
+	font-size: 18px;
+	cursor: pointer;
+	padding: 2px 8px;
+	border-radius: 5px
+}
+
+.sch-newbtn:hover {
+	color: var(--ink);
+	background: var(--bg-2)
+}
+
+.canvas-host {
+	flex: 1;
+	position: relative;
+	overflow: hidden;
+	background:
+		radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0) 0 0/22px 22px,
+		linear-gradient(180deg, #0a0f1c, #0c1322)
+}
+
+#canvas {
+	width: 100%;
+	height: 100%;
+	display: block;
+	touch-action: none;
+	cursor: default
+}
+
+.overlay {
+	position: absolute;
+	pointer-events: none;
+	inset: 0
+}
+
+.overlay>* {
+	pointer-events: auto
+}
+
+.canvas-tools {
+	position: absolute;
+	right: 14px;
+	top: 14px;
+	background: var(--bg-2);
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	padding: 4px;
+	display: flex;
+	gap: 2px;
+	box-shadow: var(--sh-1)
+}
+
+.canvas-tools button {
+	background: transparent;
+	border: none;
+	color: var(--ink-dim);
+	width: 30px;
+	height: 28px;
+	cursor: pointer;
+	border-radius: 5px;
+	font-weight: 600
+}
+
+.canvas-tools button:hover {
+	background: var(--bg-3);
+	color: var(--ink)
+}
+
+/* ISE-style vertical tool palette (modal drawing tools) */
+.canvas-toolbar {
+	position: absolute;
+	left: 14px;
+	top: 14px;
+	background: var(--bg-2);
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	padding: 4px;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	box-shadow: var(--sh-1)
+}
+
+.canvas-toolbar button {
+	background: transparent;
+	border: none;
+	color: var(--ink-dim);
+	width: 32px;
+	height: 30px;
+	cursor: pointer;
+	border-radius: 5px;
+	font-size: 13px;
+	font-weight: 600;
+	display: flex;
+	align-items: center;
+	justify-content: center
+}
+
+.canvas-toolbar button:hover {
+	background: var(--bg-3);
+	color: var(--ink)
+}
+
+.canvas-toolbar button.active {
+	background: var(--accent);
+	color: #fff
+}
+
+.canvas-toolbar hr {
+	border: none;
+	border-top: 1px solid var(--line);
+	margin: 2px 3px
+}
+
+.canvas-hint {
+	position: absolute;
+	left: 14px;
+	bottom: 14px;
+	background: #0008;
+	backdrop-filter: blur(8px);
+	border: 1px solid var(--line);
+	padding: 7px 28px 7px 12px;
+	border-radius: 6px;
+	font-size: 11.5px;
+	color: var(--ink-dim);
+	max-width: 520px;
+	pointer-events: none
+}
+
+.canvas-hint b {
+	color: var(--ink)
+}
+
+.canvas-hint .hint-close {
+	pointer-events: auto;
+	position: absolute;
+	top: 2px;
+	right: 4px;
+	background: transparent;
+	border: none;
+	color: var(--muted);
+	cursor: pointer;
+	font-size: 14px;
+	line-height: 1;
+	padding: 2px 4px
+}
+
+.canvas-hint .hint-close:hover {
+	color: var(--ink)
+}
+
+.statusbar {
+	background: var(--bg-1);
+	border-top: 1px solid var(--line);
+	display: flex;
+	align-items: center;
+	padding: 0 14px;
+	font-size: 11.5px;
+	color: var(--muted);
+	gap: 14px
+}
+
+.statusbar .ok {
+	color: var(--ok)
+}
+
+.statusbar .warn {
+	color: var(--warn)
+}
+
+.statusbar .err {
+	color: var(--err)
+}
+
+/* ---------- Project tree ---------- */
+.tree {
+	padding: 6px
+}
+
+.tree-group {
+	margin-bottom: 10px
+}
+
+.tree-group h4 {
+	margin: 0;
+	padding: 7px 6px 4px;
+	font-size: 10.5px;
+	letter-spacing: 1.3px;
+	color: var(--muted);
+	text-transform: uppercase;
+	display: flex;
+	align-items: center;
+	gap: 6px
+}
+
+.tree-group h4 .add {
+	margin-left: auto;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	background: transparent;
+	border: 1px solid var(--line);
+	color: var(--ink-dim);
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	box-sizing: border-box;
+	border-radius: 4px;
+	cursor: pointer;
+	line-height: 1;
+	font-size: 16px
+}
+
+.tree-group h4 .add:hover {
+	background: var(--accent);
+	color: white;
+	border-color: var(--accent)
+}
+
+.tree-item {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	padding: 6px 8px;
+	margin: 2px 4px;
+	border-radius: 5px;
+	cursor: pointer;
+	color: var(--ink-dim)
+}
+
+.tree-item:hover {
+	background: var(--bg-2);
+	color: var(--ink)
+}
+
+.tree-item.active {
+	background: var(--bg-3);
+	color: var(--ink)
+}
+
+.tree-item .star {
+	color: transparent;
+	font-size: 11px
+}
+
+.tree-item.top .star {
+	color: var(--warn)
+}
+
+.tree-item .ico {
+	width: 14px;
+	flex: none;
+	color: var(--accent)
+}
+
+.tree-item .label {
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap
+}
+
+.tree-item .acts {
+	display: none;
+	gap: 2px
+}
+
+.tree-item:hover .acts {
+	display: flex
+}
+
+.tree-item .acts button {
+	background: transparent;
+	border: none;
+	color: var(--muted);
+	cursor: pointer;
+	padding: 2px 4px;
+	border-radius: 3px
+}
+
+.tree-item .acts button:hover {
+	color: var(--ink);
+	background: var(--bg-2)
+}
+
+/* ---------- Palette ---------- */
+.palette {
+	padding: 6px
+}
+
+.pal-group {
+	margin-bottom: 6px
+}
+
+.pal-group h4 {
+	margin: 0;
+	padding: 7px 6px 4px;
+	font-size: 10.5px;
+	letter-spacing: 1.3px;
+	color: var(--muted);
+	text-transform: uppercase
+}
+
+.pal-grid {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 6px;
+	padding: 0 4px
+}
+
+.ptile {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 4px;
+	padding: 8px 4px;
+	background: var(--bg-2);
+	border: 1px solid var(--line);
+	border-radius: 7px;
+	cursor: grab;
+	user-select: none;
+	transition: .15s
+}
+
+.ptile:hover {
+	border-color: var(--accent);
+	background: var(--bg-3);
+	transform: translateY(-1px)
+}
+
+.ptile:active {
+	cursor: grabbing
+}
+
+.ptile svg {
+	display: block
+}
+
+.ptile span {
+	font-size: 11px;
+	color: var(--ink-dim);
+	font-weight: 500
+}
+
+.ptile:hover span {
+	color: var(--ink)
+}
+
+/* ---------- Inspector ---------- */
+.insp {
+	padding: 12px
+}
+
+.insp h3 {
+	margin: 0 0 10px;
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--ink);
+	display: flex;
+	align-items: center;
+	gap: 6px
+}
+
+.insp .row {
+	display: grid;
+	grid-template-columns: 90px 1fr;
+	gap: 8px;
+	align-items: center;
+	margin-bottom: 8px
+}
+
+.insp .row label {
+	font-size: 11.5px;
+	color: var(--ink-dim);
+	font-weight: 500
+}
+
+.insp .row input,
+.insp .row select {
+	width: 100%
+}
+
+.insp .empty {
+	padding: 20px;
+	color: var(--muted);
+	text-align: center;
+	font-size: 12px
+}
+
+/* ---------- Errors panel ---------- */
+.err-list {
+	padding: 8px
+}
+
+.err-item {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	padding: 8px 10px;
+	border-radius: 6px;
+	background: var(--bg-2);
+	margin-bottom: 6px;
+	font-size: 12px;
+	border-left: 3px solid var(--err)
+}
+
+.err-item.warn {
+	border-left-color: var(--warn)
+}
+
+.err-item.info {
+	border-left-color: var(--info)
+}
+
+.err-item .ico {
+	flex: none;
+	font-weight: 700;
+	color: var(--err)
+}
+
+.err-item.warn .ico {
+	color: var(--warn)
+}
+
+.err-item.info .ico {
+	color: var(--info)
+}
+
+.err-item .msg {
+	flex: 1;
+	color: var(--ink)
+}
+
+.err-item .ref {
+	color: var(--ink-dim);
+	font-size: 11px;
+	margin-top: 2px
+}
+
+.err-empty {
+	padding: 30px;
+	text-align: center;
+	color: var(--ok);
+	font-size: 13px
+}
+
+/* ---------- VHDL panel ---------- */
+.vhdl-pane {
+	display: flex;
+	flex-direction: column;
+	height: 100%
+}
+
+.vhdl-tools {
+	display: flex;
+	gap: 6px;
+	padding: 8px;
+	border-bottom: 1px solid var(--line);
+	align-items: center
+}
+
+.vhdl-tools select {
+	flex: 1
+}
+
+.vhdl-pane pre {
+	flex: 1;
+	margin: 0;
+	padding: 12px 14px;
+	overflow: auto;
+	font-family: "JetBrains Mono", "Consolas", monospace;
+	font-size: 12px;
+	line-height: 1.55;
+	tab-size: 2;
+	color: var(--ink)
+}
+
+.kw {
+	color: #ff8fb0
+}
+
+.ty {
+	color: #7fd6ff
+}
+
+.cm {
+	color: #6f7da0;
+	font-style: italic
+}
+
+.st {
+	color: #fbbf24
+}
+
+/* ---------- SVG node ---------- */
+/* size + fill come from each element's own attributes; CSS must not override them */
+.node text {
+	font-family: "Inter", sans-serif;
+	pointer-events: none
+}
+
+.node .body {
+	cursor: move
+}
+
+.node .body * {
+	transition: filter .12s
+}
+
+.node.selected .body :where(rect, path, polygon, circle, line) {
+	filter: drop-shadow(0 0 6px var(--accent))
+}
+
+.node.selected .body :where(rect, path, polygon).glow {
+	stroke: var(--accent)
+}
+
+.port {
+	cursor: crosshair
+}
+
+.port .hit {
+	fill: transparent;
+	stroke: none
+}
+
+.port .port-dot {
+	transition: r .1s
+}
+
+.port:hover .port-dot {
+	r: 5.5px
+}
+
+.port.pending .port-dot {
+	r: 5.5px;
+	filter: drop-shadow(0 0 5px var(--accent-2))
+}
+
+.wire {
+	cursor: pointer;
+	fill: none;
+	stroke-width: 2;
+	pointer-events: none;
+	stroke-linecap: round;
+	stroke-linejoin: round
+}
+
+.wire-hit {
+	fill: none;
+	stroke: transparent;
+	stroke-width: 12;
+	pointer-events: stroke
+}
+
+/* a bus (width > 1) draws as a big, thick, solid line — unmistakable vs a
+   1-bit signal (2px) */
+.wire.bus {
+	stroke-width: 6.5
+}
+
+/* hover any part of a wire → the whole run brightens and lifts, so overlapping
+   wires can be told apart by pointing at them */
+.wire-group:hover .wire {
+	stroke-width: 3.5;
+	filter: drop-shadow(0 0 5px var(--wire-sel))
+}
+
+.wire-group:hover .wire.bus {
+	stroke-width: 8
+}
+
+.wire-group.sel .wire {
+	filter: drop-shadow(0 0 4px var(--wire-sel))
+}
+
+.port:hover rect.port-dot {
+	filter: drop-shadow(0 0 4px var(--wire-bus))
+}
+
+.wire.selected {
+	stroke: var(--wire-sel);
+	filter: drop-shadow(0 0 4px var(--wire-sel))
+}
+
+.wire-label {
+	fill: var(--ink-dim);
+	font-size: 10.5px;
+	font-family: "JetBrains Mono", monospace;
+	pointer-events: none;
+	text-anchor: middle
+}
+
+/* ---------- Modal ---------- */
+.modal-bg {
+	position: fixed;
+	inset: 0;
+	background: #000a;
+	backdrop-filter: blur(4px);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	z-index: 1000
+}
+
+.modal {
+	background: var(--bg-1);
+	border: 1px solid var(--line);
+	border-radius: 12px;
+	box-shadow: var(--sh-3);
+	width: 560px;
+	max-width: 92vw;
+	max-height: 88vh;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden
+}
+
+.modal h2 {
+	margin: 0;
+	padding: 14px 18px;
+	font-size: 15px;
+	font-weight: 600;
+	border-bottom: 1px solid var(--line);
+	display: flex;
+	align-items: center;
+	gap: 8px
+}
+
+.modal h2 .close {
+	margin-left: auto;
+	background: transparent;
+	border: none;
+	color: var(--muted);
+	cursor: pointer;
+	font-size: 22px;
+	line-height: 1;
+	padding: 0 4px
+}
+
+.modal h2 .close:hover {
+	color: var(--err)
+}
+
+.modal-body {
+	padding: 16px 18px;
+	overflow: auto;
+	flex: 1
+}
+
+.modal-foot {
+	padding: 12px 18px;
+	border-top: 1px solid var(--line);
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px
+}
+
+.modal .row {
+	display: grid;
+	grid-template-columns: 110px 1fr;
+	gap: 10px;
+	align-items: center;
+	margin-bottom: 10px
+}
+
+.modal .row label {
+	font-size: 12px;
+	color: var(--ink-dim)
+}
+
+.modal textarea {
+	width: 100%;
+	min-height: 140px;
+	resize: vertical;
+	font-family: "JetBrains Mono", monospace;
+	font-size: 12px
+}
+
+.port-row {
+	display: grid;
+	grid-template-columns: 1fr 90px 80px 30px;
+	gap: 6px;
+	margin-bottom: 6px;
+	align-items: center
+}
+
+.port-row input,
+.port-row select {
+	width: 100%
+}
+
+.port-row button {
+	background: transparent;
+	border: 1px solid var(--line);
+	color: var(--err);
+	width: 30px;
+	height: 30px;
+	border-radius: 5px;
+	cursor: pointer
+}
+
+.port-row button:hover {
+	background: var(--err);
+	color: white
+}
+
+/* ---------- Toast ---------- */
+.toast-stack {
+	position: fixed;
+	bottom: 34px;
+	right: 18px;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	z-index: 2000;
+	pointer-events: none
+}
+
+.toast {
+	background: var(--bg-2);
+	border: 1px solid var(--line);
+	border-left: 3px solid var(--accent);
+	padding: 10px 14px;
+	border-radius: 8px;
+	box-shadow: var(--sh-2);
+	min-width: 240px;
+	max-width: 380px;
+	font-size: 12.5px;
+	animation: slideIn .25s
+}
+
+.toast.ok {
+	border-left-color: var(--ok)
+}
+
+.toast.warn {
+	border-left-color: var(--warn)
+}
+
+.toast.err {
+	border-left-color: var(--err)
+}
+
+@keyframes slideIn {
+	from {
+		transform: translateX(20px);
+		opacity: 0
+	}
+
+	to {
+		transform: translateX(0);
+		opacity: 1
+	}
+}
+
+/* ---------- Misc ---------- */
+::-webkit-scrollbar {
+	width: 10px;
+	height: 10px
+}
+
+::-webkit-scrollbar-track {
+	background: transparent
+}
+
+::-webkit-scrollbar-thumb {
+	background: #2a3756;
+	border-radius: 5px
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background: #3a4a70
+}

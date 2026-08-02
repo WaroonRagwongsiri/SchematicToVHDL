@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Schematic Studio — VHDL Generator for Spartan-7 / Vivado</title>
+	<link rel="stylesheet" href="schematic2vhdl.css">
+</head>
+
+<body>
+	<div id="app">
+		<!-- ===== TOP BAR ===== -->
+		<header class="topbar">
+			<div class="brand">⬡ Schematic Studio</div>
+			<nav class="menu" id="menu">
+				<div class="mi"><button data-menu="file">File</button>
+					<div class="dd">
+						<button data-act="new-project">📄 New Project</button>
+						<button data-act="open-project">📂 Open Project…<span class="kbd">Ctrl+O</span></button>
+						<button data-act="save-project">💾 Save Project<span class="kbd">Ctrl+S</span></button>
+						<button data-act="save-as-project">Save Project As…</button>
+						<hr>
+						<button data-act="new-sch">＋ New Schematic</button>
+						<button data-act="rename-sch">Rename Active Schematic</button>
+						<button data-act="set-top">★ Set Active as Top</button>
+						<hr>
+						<button data-act="export-vhdl">⚙ Export VHDL (Top)</button>
+						<button data-act="export-all">Export .vhd (top + entity ที่ใช้)</button>
+					</div>
+				</div>
+				<div class="mi"><button data-menu="edit">Edit</button>
+					<div class="dd">
+						<button data-act="undo">↶ Undo<span class="kbd">Ctrl+Z</span></button>
+						<button data-act="redo">↷ Redo<span class="kbd">Ctrl+Y / Ctrl+Shift+Z</span></button>
+						<hr>
+						<button data-act="copy">⎘ Copy<span class="kbd">Ctrl+C</span></button>
+						<button data-act="paste">⎘ Paste<span class="kbd">Ctrl+V</span></button>
+						<button data-act="cut">✂ Cut<span class="kbd">Ctrl+X</span></button>
+						<button data-act="duplicate">Duplicate<span class="kbd">Ctrl+D</span></button>
+						<button data-act="delete-sel">Delete<span class="kbd">Del</span></button>
+						<hr>
+						<button data-act="clear-sch">Clear Schematic</button>
+					</div>
+				</div>
+				<div class="mi"><button data-menu="tools">Tools</button>
+					<div class="dd">
+						<button data-act="import-vhdl">↓ Import VHDL as Schematic…</button>
+						<hr>
+						<button data-act="synth">🔍 Run Synthesis Check<span class="kbd">F7</span></button>
+						<button data-act="rename-wire">Rename Selected Wire</button>
+					</div>
+				</div>
+				<div class="mi"><button data-menu="view">View</button>
+					<div class="dd">
+						<button data-act="zoom-fit">Fit to View<span class="kbd">Home</span></button>
+						<button data-act="zoom-100">Zoom 100%</button>
+						<button data-act="zoom-in">Zoom In<span class="kbd">Ctrl+ล้อเมาส์</span></button>
+						<button data-act="zoom-out">Zoom Out</button>
+						<hr>
+						<button data-act="toggle-hops" id="miHops">⤴ จุดตัดสาย: เรียบ (แบบ ISE)</button>
+						<button data-act="show-hint">💡 แสดงคำแนะนำ</button>
+					</div>
+				</div>
+			</nav>
+			<div class="grow"></div>
+			<span style="font-size:11px;color:var(--muted)">Project:</span>
+			<input class="proj-name" id="projectName" value="my_project" spellcheck="false">
+			<button class="btn btn-ghost" data-act="synth" title="Run synthesis check (F7)">🔍 Check</button>
+			<button class="btn btn-primary" data-act="gen-vhdl">⚙ Generate VHDL</button>
+		</header>
+
+		<!-- ===== WORKSPACE ===== -->
+		<div class="workspace">
+
+			<!-- Left pane -->
+			<aside class="pane">
+				<div class="pane-tabs">
+					<button class="active" data-ltab="project">Project</button>
+					<button data-ltab="palette">Components</button>
+				</div>
+				<div class="pane-body" id="projectPane"></div>
+				<div class="pane-body hidden" id="palettePane"></div>
+			</aside>
+
+			<!-- Canvas -->
+			<main class="canvas-area">
+				<div class="sch-tabs" id="schTabs"></div>
+				<div class="canvas-host">
+					<svg id="canvas" xmlns="http://www.w3.org/2000/svg"></svg>
+					<div class="overlay">
+						<div class="canvas-toolbar" id="canvasToolbar">
+							<button data-tool="select" class="active" title="เลือก / ย้าย  (Esc)">➤</button>
+							<hr>
+							<button data-tool="wire"
+								title="Add Wire (W) — คลิกพอร์ต→พอร์ต ต่อสาย, คลิกกลางสาย = แยกสาย">╱</button>
+							<button data-tool="netname"
+								title="Add Net Name (N) — คลิกสายเพื่อตั้งชื่อ · พิมพ์ data(7:0) เพื่อกำหนดบัส">ab</button>
+							<!-- BUS DISABLED (commented out): <button data-tool="bus" title="Add Bus (B)">≣</button> -->
+							<button data-tool="iomarker"
+								title="Add I/O Marker (I) — คลิกขาที่ว่างเพื่อติด INPUT/OUTPUT">⇥</button>
+							<hr>
+							<button data-tool="symbol" title="Add Symbol — เปิดแผง Components">⊞</button>
+						</div>
+						<div class="canvas-tools">
+							<button data-act="zoom-out" title="Zoom out">−</button>
+							<button data-act="zoom-100" title="100%">1:1</button>
+							<button data-act="zoom-fit" title="Fit">⤢</button>
+							<button data-act="zoom-in" title="Zoom in">+</button>
+						</div>
+						<div class="canvas-hint" id="canvasHint">
+							<button class="hint-close" id="hintClose" title="ซ่อนคำแนะนำ">✕</button>
+							<span id="canvasHintText"><b>เครื่องมือ ≣ (B)</b> = ลากจากพอร์ต >1 bit ของ component
+								สร้างบัส · <b>คลิกสายบัส</b> = วาง Bus Tap · <b>ล้อ/Space+ลาก</b> เลื่อนจอ ·
+								<b>Ctrl+ล้อ</b> ซูม · <b>Del</b> ลบ · <b>F7</b> ตรวจ</span>
+						</div>
+					</div>
+				</div>
+			</main>
+
+			<!-- Right pane -->
+			<aside class="pane right">
+				<div class="pane-tabs">
+					<button class="active" data-rtab="inspector">Inspector</button>
+					<button data-rtab="errors">Issues</button>
+					<button data-rtab="vhdl">VHDL</button>
+				</div>
+				<div class="pane-body" id="inspectorPane"></div>
+				<div class="pane-body hidden" id="errorsPane"></div>
+				<div class="pane-body hidden vhdl-pane" id="vhdlPane">
+					<div class="vhdl-tools">
+						<select id="vhdlEntitySel"></select>
+						<button class="btn" data-act="copy-vhdl">Copy</button>
+						<button class="btn" data-act="download-vhdl">.vhd</button>
+					</div>
+					<pre id="vhdlOutput"
+						class="mono"><span class="cm">-- กดปุ่ม "⚙ Generate VHDL" ด้านบน เพื่อสร้างโค้ดจากวงจร</span></pre>
+				</div>
+			</aside>
+		</div>
+
+		<div class="statusbar">
+			<span id="statCounts">0 components · 0 wires</span>
+			<span class="grow"></span>
+			<span id="statAutosave">autosave: …</span>
+			<span id="statMouse">x:0, y:0 · zoom 100%</span>
+		</div>
+	</div>
+
+	<div id="modalRoot"></div>
+	<div class="toast-stack" id="toastStack"></div>
+
+	<script src="schematic2vhdl.js"></script>
+</body>
+
+</html>
