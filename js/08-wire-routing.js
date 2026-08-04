@@ -858,10 +858,12 @@ function retapBranches(sch) {
    screen waiting for the "next edit". */
 function healLayout(sch) {
 	sch = sch || activeSch();
-	retapBranches(sch);
-	alignJunctionBranch(sch);
-	reflowJunctions(sch);
-	separateWireOverlaps(sch);
+	if (AUTO_ARRANGE) {
+		retapBranches(sch);
+		alignJunctionBranch(sch);
+		reflowJunctions(sch);
+		separateWireOverlaps(sch);
+	}
 	healJunctions(sch);
 }
 

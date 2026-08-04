@@ -17,6 +17,11 @@ try {
 	HOP_STYLE = localStorage.getItem("schstudio.hopStyle") || "plain";
 } catch (_) {}
 
+let AUTO_ARRANGE = true;
+try {
+	AUTO_ARRANGE = localStorage.getItem("schstudio.autoArrange") !== "0";
+} catch (_) {}
+
 let _uidN = 1;
 
 const uid = (prefix = "i") => prefix + _uidN++;

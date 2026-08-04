@@ -53,13 +53,15 @@ function render() {
 		if (wireRoutes.has(w.id)) return;
 		const pp = wireEnds(w); if (!pp) return;
 		const r = wireRoute(w, pp[0], pp[1], wireOpts(w));
-		const lo = r.x1 + WIRE_MINLEG, hi = r.x2 - WIRE_MINLEG;
-		const yA = Math.min(r.y1, r.y2), yB = Math.max(r.y1, r.y2);
-		const collide = x => usedV.some(s => Math.abs(s.x - x) < 8 && yA < s.y2 && yB > s.y1);
-		if (collide(r.mx)) {
-			for (let k = 1; k <= 10; k++) {
-				const cand = [r.mx + k * GRID, r.mx - k * GRID].filter(x => x >= lo && x <= hi && !collide(x));
-				if (cand.length) { r.mx = cand[0]; r.d = `M${r.x1},${r.y1}H${r.mx}V${r.y2}H${r.x2}`; break; }
+		if (AUTO_ARRANGE) {
+			const lo = r.x1 + WIRE_MINLEG, hi = r.x2 - WIRE_MINLEG;
+			const yA = Math.min(r.y1, r.y2), yB = Math.max(r.y1, r.y2);
+			const collide = x => usedV.some(s => Math.abs(s.x - x) < 8 && yA < s.y2 && yB > s.y1);
+			if (collide(r.mx)) {
+				for (let k = 1; k <= 10; k++) {
+					const cand = [r.mx + k * GRID, r.mx - k * GRID].filter(x => x >= lo && x <= hi && !collide(x));
+					if (cand.length) { r.mx = cand[0]; r.d = `M${r.x1},${r.y1}H${r.mx}V${r.y2}H${r.x2}`; break; }
+				}
 			}
 		}
 		wireRoutes.set(w.id, r); addV(r);

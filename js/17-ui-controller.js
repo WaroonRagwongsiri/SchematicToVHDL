@@ -25,8 +25,18 @@ function updateHopMenuLabel() {
 
 	button.textContent =
 		HOP_STYLE === "hop"
-			? "⤴ จุดตัดสาย: สะพานข้าม (คลิกเพื่อสลับ)"
-			: "⤴ จุดตัดสาย: เรียบ แบบ ISE (คลิกเพื่อสลับ)";
+			? "จุดตัดสาย: สะพานข้าม (คลิกเพื่อสลับ)"
+			: "จุดตัดสาย: เรียบ แบบ ISE (คลิกเพื่อสลับ)";
+}
+
+function updateArrangeMenuLabel() {
+	const button = $("#miArrange");
+	if (!button) return;
+
+	button.textContent =
+		AUTO_ARRANGE
+			? "✔️ เรียงสายอัตโนมัติ (คลิกเพื่อสลับ)"
+			: "❌ ไม่เรียงสายอัตโนมัติ (คลิกเพื่อสลับ)";
 }
 
 function bindTabs() {
@@ -164,6 +174,14 @@ function bindActionDispatcher() {
 				updateHopMenuLabel();
 				render();
 				toast(HOP_STYLE === "hop" ? "จุดตัดสาย: สะพานข้าม (hop)" : "จุดตัดสาย: เรียบ (แบบ ISE)", "ok");
+				break;
+			}
+			case "toggle-arrange": {
+				AUTO_ARRANGE = !AUTO_ARRANGE;
+				try { localStorage.setItem("schstudio.autoArrange", AUTO_ARRANGE ? "1" : "0"); } catch (_) { }
+				updateArrangeMenuLabel();
+				render();
+				toast(AUTO_ARRANGE ? "เรียงสายอัตโนมัติ: เปิด" : "เรียงสายอัตโนมัติ: ปิด", "ok");
 				break;
 			}
 			case "show-hint": {

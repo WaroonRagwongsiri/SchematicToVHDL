@@ -122,6 +122,7 @@ function init() {
 	bindToolbar();
 	bindActionDispatcher();
 	updateHopMenuLabel();
+	updateArrangeMenuLabel();
 
 	let restored = false;
 
