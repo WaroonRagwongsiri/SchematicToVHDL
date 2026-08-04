@@ -9,14 +9,17 @@ function renderProjectTree() {
 	const html = [];
 	html.push(`<div class="tree">`);
 
-	// Schematics
+	// Schematics (draggable for reorder)
 	html.push(`<div class="tree-group"><h4>SCHEMATICS
     <button class="add" title="New schematic" data-act="new-sch">+</button></h4>`);
-	for (const id in p.schematics) {
+	const schIds = orderedSchIds();
+	for (const id of schIds) {
 		const sch = p.schematics[id];
+		if (!sch) continue;
 		const isTop = id === p.topId;
 		const isActive = id === state.activeId;
-		html.push(`<div class="tree-item ${isActive ? "active" : ""} ${isTop ? "top" : ""}" data-open="${id}">
+		html.push(`<div class="tree-item ${isActive ? "active" : ""} ${isTop ? "top" : ""}" data-open="${id}" draggable="true" data-sch-reorder="${id}">
+      <span class="drag-handle" title="ลากเพื่อเรียงลำดับ">⋮⋮</span>
       <span class="star">★</span>
       <span class="ico">◆</span>
       <span class="label">${esc(sch.name)}</span>
@@ -82,6 +85,7 @@ function renderProjectTree() {
 		if (Object.keys(state.project.schematics).length === 1) { toast("ต้องเหลืออย่างน้อย 1 schematic", "warn"); return; }
 		if (!confirm("ลบ schematic นี้?")) return;
 		delete state.project.schematics[id];
+		if (state.project.schOrder) state.project.schOrder = state.project.schOrder.filter(x => x !== id);
 		// remove any placed instances of this schematic used as a sub-block
 		const nInst = removeInstancesOf("SCH:" + id);
 		if (nInst) toast(`ลบ instance ที่ใช้ schematic นี้ไปด้วย ${nInst} ตัว`, "warn");
@@ -119,6 +123,64 @@ function renderProjectTree() {
 			state.dragType = e.dataset.pal;
 			// Firefox aborts drags with an empty data store
 			try { ev.dataTransfer.setData("text/plain", e.dataset.pal); ev.dataTransfer.effectAllowed = "copy"; } catch (_) { }
+		});
+	});
+
+	// --- Schematic reorder drag-and-drop ---
+	const schGroup = root.querySelector(".tree-group");
+	const schItems = () => schGroup.querySelectorAll("[data-sch-reorder]");
+	let dragSchId = null;
+
+	schItems().forEach(e => {
+		e.addEventListener("dragstart", ev => {
+			dragSchId = e.dataset.schReorder;
+			ev.dataTransfer.effectAllowed = "move";
+			try { ev.dataTransfer.setData("text/plain", dragSchId); } catch (_) { }
+			requestAnimationFrame(() => e.classList.add("sch-dragging"));
+		});
+		e.addEventListener("dragend", () => {
+			dragSchId = null;
+			e.classList.remove("sch-dragging");
+			schGroup.querySelectorAll(".sch-drop-above, .sch-drop-below").forEach(el => {
+				el.classList.remove("sch-drop-above", "sch-drop-below");
+			});
+		});
+		e.addEventListener("dragover", ev => {
+			if (!dragSchId || e.dataset.schReorder === dragSchId) return;
+			ev.preventDefault();
+			ev.dataTransfer.dropEffect = "move";
+			const rect = e.getBoundingClientRect();
+			const mid = rect.top + rect.height / 2;
+			e.classList.remove("sch-drop-above", "sch-drop-below");
+			if (ev.clientY < mid) {
+				e.classList.add("sch-drop-above");
+			} else {
+				e.classList.add("sch-drop-below");
+			}
+		});
+		e.addEventListener("dragleave", () => {
+			e.classList.remove("sch-drop-above", "sch-drop-below");
+		});
+		e.addEventListener("drop", ev => {
+			ev.preventDefault();
+			e.classList.remove("sch-drop-above", "sch-drop-below");
+			const fromId = dragSchId;
+			const toId = e.dataset.schReorder;
+			if (!fromId || fromId === toId) return;
+
+			const order = orderedSchIds();
+			const fromIdx = order.indexOf(fromId);
+			if (fromIdx < 0) return;
+
+			order.splice(fromIdx, 1);
+			const rect = e.getBoundingClientRect();
+			const mid = rect.top + rect.height / 2;
+			const insertIdx = ev.clientY < mid ? order.indexOf(toId) : order.indexOf(toId) + 1;
+			order.splice(insertIdx, 0, fromId);
+
+			if (!state.project.schOrder) state.project.schOrder = [];
+			state.project.schOrder = order;
+			snapshot(); renderProjectTree();
 		});
 	});
 }

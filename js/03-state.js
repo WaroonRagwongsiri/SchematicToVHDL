@@ -15,6 +15,7 @@ function blankProject() {
 	return {
 		name: "my_project",
 		topId: id,
+		schOrder: [id],
 		schematics: {
 			[id]: blankSchematic(id, "top")
 		},
@@ -50,6 +51,14 @@ const state = {
 
 function activeSch() {
 	return state.project.schematics[state.activeId];
+}
+
+function orderedSchIds() {
+	const p = state.project;
+	const order = p.schOrder || [];
+	const ids = order.filter(id => p.schematics[id]);
+	Object.keys(p.schematics).forEach(id => { if (!ids.includes(id)) ids.push(id); });
+	return ids;
 }
 
 function comp(cid, sch = activeSch()) {

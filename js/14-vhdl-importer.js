@@ -217,6 +217,8 @@ function importVhdlFile() {
 				const sch = blankSchematic(id, name);
 				sch.components = built.comps; sch.wires = built.wires;
 				state.project.schematics[id] = sch;
+				if (!state.project.schOrder) state.project.schOrder = [];
+				state.project.schOrder.push(id);
 				// same as deserialize: turn a driver's parallel sinks into junction-branch
 				// fan-out (visible dots) and run the full layout — without this every
 				// imported fan-out drew as a bare T with no connection dot until save+reload

@@ -664,6 +664,33 @@ textarea:focus {
 	background: var(--bg-2)
 }
 
+.tree-item[draggable="true"] .drag-handle {
+	display: none;
+	color: var(--muted);
+	font-size: 10px;
+	letter-spacing: -1px;
+	cursor: grab;
+	flex-shrink: 0;
+	width: 10px;
+	text-align: center
+}
+
+.tree-item[draggable="true"]:hover .drag-handle {
+	display: block
+}
+
+.tree-item.sch-dragging {
+	opacity: 0.35
+}
+
+.tree-item.sch-drop-above {
+	box-shadow: inset 0 2px 0 0 var(--accent)
+}
+
+.tree-item.sch-drop-below {
+	box-shadow: inset 0 -2px 0 0 var(--accent)
+}
+
 /* ---------- Palette ---------- */
 .palette {
 	padding: 6px

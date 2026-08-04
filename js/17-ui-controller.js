@@ -119,6 +119,8 @@ function bindActionDispatcher() {
 				if (!nm) return;
 				const id = uid("sch");
 				state.project.schematics[id] = blankSchematic(id, uniqueSchName(nm, id));
+				if (!state.project.schOrder) state.project.schOrder = [];
+				state.project.schOrder.push(id);
 				openSchTab(id);
 				snapshot(); renderAll();
 				break;
