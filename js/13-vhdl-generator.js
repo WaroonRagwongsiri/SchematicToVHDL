@@ -422,6 +422,16 @@ function generateSchVhdl(sch) {
 		portDecls.push(`    ${c._net} : out ${t}`);
 	});
 
+	// flip-flop state nets get per-signal power-up initializers (q=0, qn=1)
+	// so synthesis/simulation start from a defined state without a reset port.
+	const ffInit = {};
+	inners.forEach(c => {
+		if (c.type !== "DFF" && c.type !== "JKFF" && c.type !== "TFF" && c.type !== "SRFF") return;
+		if (!c._nets) return;
+		if (c._nets.q) ffInit[c._nets.q] = "0";
+		if (c._nets.qn) ffInit[c._nets.qn] = "1";
+	});
+
 	// collect internal signals (scalars grouped, vectors declared individually)
 	const sigScalars = [];
 	const sigVectors = [];
@@ -431,7 +441,7 @@ function generateSchVhdl(sch) {
 		Object.keys(c._nets).forEach(pid => {
 			const wdt = (c._netW && c._netW[pid]) || 1;
 			if (wdt > 1) sigVectors.push({ name: c._nets[pid], w: wdt });
-			else sigScalars.push(c._nets[pid]);
+			else if (!ffInit[c._nets[pid]]) sigScalars.push(c._nets[pid]);
 		});
 	});
 
@@ -468,6 +478,8 @@ function generateSchVhdl(sch) {
 	if (compDecls.length) code += compDecls.join("\n") + "\n";
 	if (sigScalars.length) code += `  signal ${sigScalars.join(", ")} : STD_LOGIC;\n`;
 	sigVectors.forEach(s => { code += `  signal ${s.name} : STD_LOGIC_VECTOR(${s.w - 1} downto 0);\n`; });
+	const ffInits = Object.keys(ffInit);
+	ffInits.forEach(n => { code += `  signal ${n} : STD_LOGIC := '${ffInit[n]}';\n`; });
 	code += `begin\n`;
 	if (concurrent.length) {
 		code += `\n  -- combinational logic\n` + concurrent.join("\n") + "\n";
