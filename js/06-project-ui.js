@@ -42,7 +42,7 @@ function renderProjectTree() {
 
 	// Sub-schematics (other schematics in project as hierarchy blocks)
 	html.push(`<div class="tree-group"><h4>USE AS SUB-BLOCK</h4>`);
-	const others = Object.keys(p.schematics).filter(id => id !== state.activeId);
+	const others = orderedSchIds().filter(id => id !== state.activeId);
 	if (others.length === 0) {
 		html.push(`<div style="padding:6px 10px;color:var(--muted);font-size:11px">— ไม่มี schematic อื่น —</div>`);
 	} else {
