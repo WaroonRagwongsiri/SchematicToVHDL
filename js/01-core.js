@@ -22,6 +22,13 @@ try {
 	AUTO_ARRANGE = localStorage.getItem("schstudio.autoArrange") !== "0";
 } catch (_) {}
 
+/* VHDL round-trip: the exported .vhd carries the schematic itself in a comment
+   block (see layoutStamp() in 13-vhdl-generator.js) between these two markers, so
+   Import gives back the SAME gates in the SAME places. Hand-written VHDL has no
+   block and falls back to the AST rebuild. */
+const LAYOUT_TAG_BEGIN = "-- @SCHEMATIC-STUDIO-LAYOUT-BEGIN";
+const LAYOUT_TAG_END = "-- @SCHEMATIC-STUDIO-LAYOUT-END";
+
 let _uidN = 1;
 
 const uid = (prefix = "i") => prefix + _uidN++;

@@ -3,6 +3,28 @@
 /* =========================================================================
    COMPONENT OPERATIONS
    ========================================================================= */
+/* Can sheet `id` be dropped INSIDE sheet `hostId` as a sub-block?
+   Not if that closes a loop. VHDL lets you write the loop — top instantiates sub and
+   sub instantiates top — and Vivado then fails to elaborate it ("recursive
+   instantiation"), so the whole design stops building. And never the project's TOP:
+   it is the root, so putting it inside anything either makes exactly that loop, or
+   buries the root in a sheet nothing reaches. */
+function schUsesSheet(id, targetId, seen) {
+	if (id === targetId) return true;
+	seen = seen || new Set();
+	if (seen.has(id)) return false;
+	seen.add(id);
+	const s = state.project.schematics[id];
+	if (!s) return false;
+	return (s.components || []).some(c => typeof c.type === "string" && c.type.indexOf("SCH:") === 0
+		&& schUsesSheet(c.type.slice(4), targetId, seen));
+}
+function subBlockBlockedWhy(id, hostId) {
+	if (id === hostId) return "ใส่ schematic ลงในตัวเองไม่ได้";
+	if (id === state.project.topId) return "นี่คือ top ของโปรเจกต์ — ใช้เป็น sub-block ไม่ได้ (Vivado จะ elaborate ไม่ผ่าน)";
+	if (schUsesSheet(id, hostId)) return "จะเกิดวงวน: schematic นี้ใช้แผ่นปัจจุบันอยู่แล้ว";
+	return "";
+}
 function addComp(type, x, y) {
 	const sch = activeSch();
 	if (!sch) return;
@@ -14,6 +36,8 @@ function addComp(type, x, y) {
 		typeDef0 = customTypeDef(state.project.customs[name]);
 	} else if (type.startsWith("SCH:")) {
 		if (!state.project.schematics[type.slice(4)]) return;
+		const why = subBlockBlockedWhy(type.slice(4), sch.id);
+		if (why) { toast(why, "warn", 3600); return; }
 		typeDef0 = schTypeDef(state.project.schematics[type.slice(4)]);
 	} else {
 		if (!TYPES[type]) return;
@@ -47,7 +71,7 @@ function addComp(type, x, y) {
 const TOOL_INFO = {
 	select: {
 		cur: "", msg: "โหมดเลือก/ย้าย",
-		hint: "<b>เครื่องมือ ≣ (B)</b> = ลากจากพอร์ต >1 bit ของ component สร้างบัส · <b>คลิกสายบัส</b> = วาง Bus Tap · <b>ล้อ/Space+ลาก</b> เลื่อนจอ · <b>Ctrl+ล้อ</b> ซูม · <b>Del</b> ลบ · <b>F7</b> ตรวจ"
+		hint: "<b>เครื่องมือ ≣ (B)</b> = วาง Bus Tap บนสายบัส (ดึงบิตถัดไปอัตโนมัติ) · <b>ลากจากพอร์ต >1 bit</b> ของ component ด้วยเครื่องมือ ╱ = สร้างบัส · <b>ล้อ/Space+ลาก</b> เลื่อนจอ · <b>Ctrl+ล้อ</b> ซูม · <b>Del</b> ลบ · <b>F7</b> ตรวจ"
 	},
 	wire: {
 		cur: "crosshair", msg: "Add Wire — คลิกพอร์ต→พอร์ตเพื่อต่อสาย · คลิกกลางสาย = แยกสาย",
@@ -57,9 +81,9 @@ const TOOL_INFO = {
 		cur: "text", msg: "Add Net Name — คลิกที่สายเพื่อตั้งชื่อ",
 		hint: "<b>คลิกสาย</b> ตั้งชื่อ · บัสต้องลากจากพอร์ต >1 bit ของ component (ตั้งชื่อบัสได้ แต่ความกว้างมาจากพอร์ตต้นทาง)"
 	},
-	bus: {
-		cur: "crosshair", msg: "Add Bus — ลากจากพอร์ต >1 bit ของ component เพื่อสร้างบัส · คลิกสายบัส = ดึงบิต (Bus Tap)",
-		hint: "<b>ลากจากพอร์ต >1 bit</b> ของ component = สร้างสายบัส (ตั้งความกว้างพอร์ตใน Inspector) · <b>คลิกสายบัส</b> = วาง Bus Tap ดึงบิตถัดไป · <b>Esc</b> ยกเลิก · สร้างบัสลอยจากพื้นที่ว่างไม่ได้"
+	bustap: {
+		cur: "crosshair", msg: "Bus Tap (B) — คลิกบนสายบัสเพื่อดึงบิตถัดไป",
+		hint: "<b>คลิกบนสายบัส</b> = วาง Bus Tap ที่บิตถัดไป (auto-increment) · ต่อขา y เข้า INPUT จะสลับเป็นโหมด merge ให้อัตโนมัติ · ปรับบิต/โหมดใน Inspector · <b>Esc</b> ยกเลิก"
 	},
 	iomarker: {
 		cur: "crosshair", msg: "Add I/O Marker — คลิกขาที่ยังว่างเพื่อติด INPUT/OUTPUT อัตโนมัติ",
@@ -71,7 +95,7 @@ function setTool(t, silent) {
 	if (!TOOL_INFO[t]) t = "select";
 	state.tool = t;
 	if (state.pendingWire) { state.pendingWire = null; healJunctions(); }  // no orphan dots on tool switch
-	$$("#canvasToolbar button").forEach(b => b.classList.toggle("active", b.dataset.tool === t));
+	$$("#canvasToolbar button[data-tool]").forEach(b => b.classList.toggle("active", b.dataset.tool === t));
 	canvas.style.cursor = TOOL_INFO[t].cur;
 	const ht = $("#canvasHintText"); if (ht) ht.innerHTML = TOOL_INFO[t].hint || TOOL_INFO[t].msg;
 	if (!silent) toast(TOOL_INFO[t].msg, "info", 2200);
@@ -125,36 +149,18 @@ function applyWireName(w, raw) {
 	snapshot(); render(); renderInspector();
 }
 
-/* bits already taken by Bus Taps on this wire's net (union of hi..lo ranges).
-   The sweep is UNDIRECTED — a source connected INTO a free endpoint later gives
-   the net wires of both orientations, and every tap must still be counted. */
+/* Which bits of this bus already have a tap? (union over the whole net, both
+   directions — a merged bus must not have two taps writing the same bit) */
 function tappedBitsOnNet(w, sch) {
 	sch = sch || activeSch();
 	const used = new Set();
-	const seenW = new Set(), seenJ = new Set(), stack = [];
-	const noteTap = x => {
-		const tc = comp(x.to.cid, sch);
-		if (tc && tc.type === "BUSTAP" && x.to.pid === "d") {
-			const hi = Math.max(tc.params.hi ?? 0, tc.params.lo ?? 0);
-			const lo = Math.min(tc.params.hi ?? 0, tc.params.lo ?? 0);
-			for (let b = lo; b <= hi; b++) used.add(b);
-		}
-	};
-	const pushJ = cid => {
-		const c0 = comp(cid, sch);
-		if (c0 && c0.type === "JUNCTION" && !seenJ.has(c0.id)) { seenJ.add(c0.id); stack.push(c0.id); }
-	};
-	seenW.add(w.id); noteTap(w); pushJ(w.from.cid); pushJ(w.to.cid);
-	while (stack.length) {
-		const jid = stack.pop();
-		sch.wires.forEach(x => {
-			if (seenW.has(x.id)) return;
-			if (x.from.cid === jid || x.to.cid === jid) {
-				seenW.add(x.id); noteTap(x);
-				pushJ(x.from.cid); pushJ(x.to.cid);
-			}
+	netWires(sch, w).forEach(id => {
+		const x = sch.wires.find(y => y.id === id); if (!x) return;
+		[x.from, x.to].forEach(ep => {
+			const c = comp(ep.cid, sch);
+			if (c && c.type === "BUSTAP") used.add(c.params.bit ?? 0);
 		});
-	}
+	});
 	return used;
 }
 /* Add Bus Tap: click a bus wire → drop a tap flush on it (junction + triangle),
@@ -176,7 +182,7 @@ function stampTapOnWire(w, point) {
 	splitWireThroughJunction(w, j, sch);
 	const tap = {
 		id: uid("c"), type: "BUSTAP", x: 0, y: 0, label: "",
-		params: { hi: bit, lo: bit, dir: at.seg === "v" ? "right" : "down" }
+		params: { bit, mode: "split", dir: at.seg === "v" ? "right" : "down" }
 	};
 	const dp0 = TYPES.BUSTAP.ports(tap.params).find(p => p.id === "d");
 	tap.x = at.x - dp0.dx;   // seat so the d pin lands EXACTLY on the bus point (any tap size)
@@ -185,8 +191,8 @@ function stampTapOnWire(w, point) {
 	sch.wires.push({ id: uid("w"), from: { cid: j.id, pid: "j" }, to: { cid: tap.id, pid: "d" }, name: "" });
 	state.selection = new Set([tap.id]);
 	snapshot(); render(); renderInspector();
-	if (full) toast(`ครบทุกบิตแล้ว — วางซ้ำที่บิต [0] (ปรับช่วงได้ใน Inspector)`, "info", 3200);
-	else toast(`วาง Bus Tap บิต [${bit}] แล้ว — คลิกต่อ = บิตถัดไป · ปรับช่วงใน Inspector`, "ok", 2800);
+	if (full) toast(`ครบทุกบิตแล้ว — วางซ้ำที่บิต [0] (ปรับบิตได้ใน Inspector)`, "info", 3200);
+	else toast(`วาง Bus Tap บิต [${bit}] แล้ว — คลิกต่อ = บิตถัดไป · ปรับบิต/โหมดใน Inspector`, "ok", 2800);
 	return true;
 }
 
@@ -326,9 +332,11 @@ function duplicateSelection() {
 		newSel.add(nc.id);
 	});
 	// copy wires between selected components — deep-clone so the user's manual route
-	// (pts waypoints, dragged z/s bends mx/my, zjog) survives the duplicate
+	// (pts waypoints, dragged z/s bends mx/my, zjog) survives the duplicate. pts/autoPts/
+	// mx/my are ABSOLUTE canvas coordinates, so freeze the auto jog onto the clone first
+	// (else it recomputes from the copy's new row) and then shift everything with it.
 	sch.wires.filter(w => ids.has(w.from.cid) && ids.has(w.to.cid)).forEach(w => {
-		const nw = JSON.parse(JSON.stringify(w));
+		const nw = translateWire(freezeAutoRoute(JSON.parse(JSON.stringify(w)), w, sch), 2 * GRID, 2 * GRID);
 		nw.id = uid("w");
 		nw.from = { cid: idMap.get(w.from.cid), pid: w.from.pid };
 		nw.to = { cid: idMap.get(w.to.cid), pid: w.to.pid };
@@ -345,7 +353,7 @@ function copySelection() {
 		.map(c => JSON.parse(JSON.stringify(c)));
 	if (!comps.length) { toast("ไม่มี component ที่เลือก", "warn"); return; }
 	const wires = sch.wires.filter(w => ids.has(w.from.cid) && ids.has(w.to.cid))
-		.map(w => JSON.parse(JSON.stringify(w)));
+		.map(w => freezeAutoRoute(JSON.parse(JSON.stringify(w)), w, sch));
 	state.clipboard = { components: comps, wires };
 	toast(`คัดลอก ${comps.length} บล็อกแล้ว`, "ok");
 }
@@ -385,8 +393,9 @@ function pasteClipboard() {
 	});
 	state.clipboard.wires.forEach(w => {
 		if (!idMap.has(w.from.cid) || !idMap.has(w.to.cid)) return;
-		// deep-clone to keep the user's manual route (pts/mx/my/zjog)
-		const nw = JSON.parse(JSON.stringify(w));
+		// deep-clone to keep the user's manual route (pts/mx/my/zjog), then move that
+		// route by the same delta as the parts it connects
+		const nw = translateWire(JSON.parse(JSON.stringify(w)), ox, oy);
 		nw.id = uid("w");
 		nw.from = { cid: idMap.get(w.from.cid), pid: w.from.pid };
 		nw.to = { cid: idMap.get(w.to.cid), pid: w.to.pid };
@@ -430,6 +439,7 @@ function rotateSelection(step) {       // step +1 = CW 90°, -1 = CCW 90°
 	const sch = activeSch();
 	const cs = [...state.selection].map(id => comp(id, sch)).filter(orientable);
 	if (!cs.length) { toast("เลือก component ที่จะหมุนก่อน", "warn"); return; }
+	if (layoutLocked(sch)) { lockedNudge(); return; }   // turning a symbol re-aims its pins
 	cs.forEach(c => { c.rot = (((c.rot || 0) + step * 90) % 360 + 360) % 360; });
 	snapshot(); render(); renderInspector();
 }
@@ -437,6 +447,7 @@ function mirrorSelection() {
 	const sch = activeSch();
 	const cs = [...state.selection].map(id => comp(id, sch)).filter(orientable);
 	if (!cs.length) { toast("เลือก component ที่จะพลิกก่อน", "warn"); return; }
+	if (layoutLocked(sch)) { lockedNudge(); return; }
 	cs.forEach(c => { c.mirror = !c.mirror; });
 	snapshot(); render(); renderInspector();
 }

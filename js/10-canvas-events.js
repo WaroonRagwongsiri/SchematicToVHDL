@@ -29,11 +29,18 @@ function startDrag(ev, c) {
 		state.selection.add(c.id);
 	}
 	const m = svgPoint(ev);
+	// 🔒 freezes POSITIONS: selecting, wiring, renaming and deleting all still work, but
+	// nothing already placed can be dragged out of position — by the app OR by hand
+	if (layoutLocked()) { lockedNudge(); render(); renderInspector(); return; }
 	const items = Array.from(state.selection)
 		.map(id => comp(id))
 		.filter(Boolean)
 		.map(cc => ({ c: cc, ox: m.x - cc.x, oy: m.y - cc.y }));
-	state.drag = { items, anchor: c.id, sx: m.x, sy: m.y, moved: false, shift: ev.shiftKey, prevMulti };
+	// if the symbol ALREADY sits on a wire (an old file, a paste, a drop) the no-covering
+	// rule must not trap it there forever — only a drag that CREATES an overlap is
+	// refused, so a bad position can always be dragged out of.
+	const coverAtStart = compsCoverWire(activeSch(), items.map(d => d.c));
+	state.drag = { items, anchor: c.id, sx: m.x, sy: m.y, moved: false, shift: ev.shiftKey, prevMulti, coverAtStart };
 	render(); renderInspector();
 }
 canvas.addEventListener("mousemove", ev => {
@@ -54,6 +61,7 @@ canvas.addEventListener("mousemove", ev => {
 			}
 		}
 		if (state.drag.moved) {
+			const was = state.drag.items.map(d => ({ x: d.c.x, y: d.c.y }));
 			state.drag.items.forEach(d => {
 				// snap what the user SEES. A junction's dot is drawn at its box + 6, and 6
 				// is not a multiple of GRID(11) — snapping the box lands the dot at 11k+6,
@@ -63,26 +71,63 @@ canvas.addEventListener("mousemove", ev => {
 				d.c.x = snap(state.mouse.x - d.ox + q) - q;
 				d.c.y = snap(state.mouse.y - d.oy + q) - q;
 			});
+			// the other half of "a wire may not be laid on a gate": a symbol may not be
+			// parked ON a wire either. Same end state, opposite gesture — so the same
+			// answer: hold the last clear position and let the symbol stop against the wire.
+			if (!state.drag.coverAtStart && compsCoverWire(activeSch(), state.drag.items.map(d => d.c))) {
+				state.drag.items.forEach((d, i) => { d.c.x = was[i].x; d.c.y = was[i].y; });
+				bodyBlockNudge();
+			}
 			render();
 		}
 	} else if (state.cornerDrag) {
 		const cd = state.cornerDrag;
+		const prevPt = cd.w.pts[cd.index] ? { x: cd.w.pts[cd.index].x, y: cd.w.pts[cd.index].y } : null;
 		cd.w.pts[cd.index] = { x: snap(state.mouse.x), y: snap(state.mouse.y) };
-		cd.moved = true;
+		// the wire may not be dragged onto a gate: keep the last position that was clear,
+		// so the run stops against the symbol instead of crossing it
+		if (routeCutsBody(activeSch(), cd.w)) {
+			if (prevPt) cd.w.pts[cd.index] = prevPt;
+			bodyBlockNudge();
+		} else {
+			cd.moved = true;
+		}
 		render();
 	} else if (state.wireDrag) {
 		const wd = state.wireDrag;
 		if (!wd.moved && Math.abs(state.mouse.x - wd.m0.x) + Math.abs(state.mouse.y - wd.m0.y) > 4) wd.moved = true;
 		if (wd.moved) {
-			if (wd.kind === "z") { wd.w.mx = snap(state.mouse.x); render(); }
-			else if (wd.kind === "s") { wd.w.my = snap(state.mouse.y); render(); }
+			if (wd.kind === "z") {
+				const prev = wd.w.mx;
+				wd.w.mx = snap(state.mouse.x);
+				if (routeCutsBody(activeSch(), wd.w)) {
+					if (prev === undefined) delete wd.w.mx; else wd.w.mx = prev;
+					bodyBlockNudge();
+				}
+				render();
+			}
+			else if (wd.kind === "s") {
+				const prev = wd.w.my;
+				wd.w.my = snap(state.mouse.y);
+				if (routeCutsBody(activeSch(), wd.w)) {
+					if (prev === undefined) delete wd.w.my; else wd.w.my = prev;
+					bodyBlockNudge();
+				}
+				render();
+			}
 			else if (wd.kind === "h" || wd.kind === "v" || wd.kind === "l" || wd.kind === "lh") {
 				// these shapes have no free/adjustable leg of their own — the FIRST drag
 				// plants a manual waypoint at the drag point, switching the wire onto the
 				// same user-routed (poly) path used by hand-drawn multi-corner wires. From
 				// then on it's a normal draggable corner (see cornerDrag / w.pts above).
+				const hadPts = !!wd.w.pts;
+				const prevPt = hadPts ? { x: wd.w.pts[0].x, y: wd.w.pts[0].y } : null;
 				if (!wd.w.pts) wd.w.pts = [{ x: 0, y: 0 }];
 				wd.w.pts[0] = { x: snap(state.mouse.x), y: snap(state.mouse.y) };
+				if (routeCutsBody(activeSch(), wd.w)) {
+					if (hadPts) wd.w.pts[0] = prevPt; else delete wd.w.pts;
+					bodyBlockNudge();
+				}
 				render();
 			}
 		}
@@ -233,10 +278,9 @@ canvas.addEventListener("mousedown", ev => {
 		} else if (state.pendingWire) {
 			// a deferred branch (onWire) → empty click cancels it
 			state.pendingWire = null; render();
-		} else if (state.tool === "bus") {
-			// a bus can NOT be started from empty space — it must be dragged out from a
-			// component's port (a >1-bit pin). Guide the user to a port.
-			toast("สร้างบัสจากพอร์ตของ component เท่านั้น — ลากออกจากขา >1 bit (สร้างบัสลอยจากพื้นที่ว่างไม่ได้)", "warn", 3600);
+		} else if (state.tool === "bustap") {
+			// a Bus Tap can only be dropped ON a bus wire — guide the user there
+			toast("วาง Bus Tap ได้เฉพาะบนสายบัสเท่านั้น — คลิกที่เส้นบัส", "warn", 3200);
 		} else if (state.tool === "select") {
 			// plain left-drag = marquee (rectangle) selection
 			const m = svgPoint(ev);
@@ -314,7 +358,7 @@ window.addEventListener("keydown", ev => {
 			renderInspector();
 		}
 	} else if (!ctl && (code === "KeyW" || k === "w")) { setTool("wire"); ev.preventDefault(); }
-	/* BUS DISABLED (commented out): else if(!ctl && (code==="KeyB" || k==="b")){ setTool("bus"); ev.preventDefault(); } */
+	else if (!ctl && (code === "KeyB" || k === "b")) { setTool("bustap"); ev.preventDefault(); }
 	else if (!ctl && (code === "KeyN" || k === "n")) { setTool("netname"); ev.preventDefault(); }
 	else if (!ctl && (code === "KeyI" || k === "i")) { setTool("iomarker"); ev.preventDefault(); }
 	else if (!ctl && (code === "KeyR" || k === "r")) { rotateSelection(ev.shiftKey ? -1 : 1); ev.preventDefault(); }
@@ -343,14 +387,22 @@ window.addEventListener("keydown", ev => {
 		const dx = ev.key === "ArrowLeft" ? -1 : ev.key === "ArrowRight" ? 1 : 0;
 		const dy = ev.key === "ArrowUp" ? -1 : ev.key === "ArrowDown" ? 1 : 0;
 		const selComps = Array.from(state.selection).map(id => comp(id)).filter(Boolean);
+		if (selComps.length && layoutLocked()) { lockedNudge(); ev.preventDefault(); return; }
 		if (selComps.length) {
 			// nudge selected components one grid step (a junction snaps by its DOT, which
 			// sits at box+6 — snapping the box would drift it half a grid off the lines)
+			const wasClear = !compsCoverWire(activeSch(), selComps);
+			const was = selComps.map(c => ({ x: c.x, y: c.y }));
 			selComps.forEach(c => {
 				const q = c.type === "JUNCTION" ? 6 : 0;
 				c.x = snap(c.x + q + dx * GRID) - q;
 				c.y = snap(c.y + q + dy * GRID) - q;
 			});
+			// a nudge may not park a symbol on a wire either (same rule as the mouse drag)
+			if (wasClear && compsCoverWire(activeSch(), selComps)) {
+				selComps.forEach((c, i) => { c.x = was[i].x; c.y = was[i].y; });
+				bodyBlockNudge(); render(); ev.preventDefault(); return;
+			}
 			// same pact as the mouse drag: a dot the user placed is theirs, so healLayout
 			// below must not re-tap it back (it would silently undo the nudge). Only when
 			// dots are what's selected — nudging a mixed block isn't aiming at its dots.

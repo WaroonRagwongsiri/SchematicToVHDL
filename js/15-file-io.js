@@ -52,6 +52,18 @@ function deserialize(json) {
 	const migrate = s => {
 		if (!s || !s.components) return;
 		s.components.forEach(cc => { if (cc.type === "TAP") { cc.type = "BUSTAP"; if (cc.params) delete cc.params.width; } });
+		// old BUS TAP params were a hi:lo bit-RANGE (always an output); the current model
+		// is a single bit + split/merge mode. Collapse a saved range onto its low bit
+		// (a genuine multi-bit range has no equivalent any more) and default to split,
+		// since every old tap only ever read OFF the bus.
+		s.components.forEach(cc => {
+			if (cc.type !== "BUSTAP" || !cc.params) return;
+			if (cc.params.bit !== undefined) return;                 // already current format
+			if (cc.params.hi === undefined && cc.params.lo === undefined) return;
+			cc.params.bit = cc.params.lo ?? cc.params.hi ?? 0;
+			cc.params.mode = cc.params.mode || "split";
+			delete cc.params.hi; delete cc.params.lo;
+		});
 		const dead = new Set(s.components.filter(cc => DEAD_TYPES.has(cc.type)).map(cc => cc.id));
 		if (dead.size) {
 			s.components = s.components.filter(cc => !dead.has(cc.id));

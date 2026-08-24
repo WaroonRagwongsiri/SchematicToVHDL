@@ -89,7 +89,7 @@ function bindMenus() {
 }
 
 function bindToolbar() {
-	$$("#canvasToolbar button").forEach(button => {
+	$$("#canvasToolbar button[data-tool]").forEach(button => {
 		button.addEventListener("click", () => {
 			setTool(button.dataset.tool);
 		});
@@ -136,6 +136,21 @@ function bindActionDispatcher() {
 				state.project.topId = state.activeId;
 				snapshot(); renderAll();
 				toast("ตั้งเป็น top entity: " + activeSch().name, "ok");
+				break;
+			}
+			case "lock-layout": {
+				const sch = activeSch(); if (!sch) return;
+				sch.locked = !sch.locked;
+				snapshot(); renderAll();
+				toast(sch.locked ? "🔒 ล็อกการจัดวางแล้ว — สายและจุดจะอยู่กับที่ ไม่มีการจัดใหม่อัตโนมัติ"
+					: "🔓 ปลดล็อกการจัดวาง — ระบบจะช่วยจัดสายให้อีกครั้ง", "ok", 3000);
+				break;
+			}
+			case "relayout": {
+				const sch = activeSch(); if (!sch) return;
+				healLayout(sch, true);       // one-shot, on request, even when locked
+				snapshot(); renderAll();
+				toast("จัดสายใหม่ทั้งแผ่นแล้ว (กด Ctrl+Z เพื่อย้อนกลับ)", "ok", 3000);
 				break;
 			}
 			case "gen-vhdl": generateVHDL(); break;

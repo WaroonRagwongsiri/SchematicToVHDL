@@ -95,45 +95,6 @@ function renderInspector() {
 			});
 			return;
 		}
-		if (c && c.type === "BUSTAP") {
-			// dedicated Bus Tap panel: live context of the tapped bus + clamped bits
-			const dw = sch.wires.find(x => x.to.cid === c.id && x.to.pid === "d");
-			const sw = dw ? netWidth(dw, sch) : 0;              // attached bus width (0 = detached)
-			const hi = Math.max(c.params.hi ?? 0, c.params.lo ?? 0);
-			const lo = Math.min(c.params.hi ?? 0, c.params.lo ?? 0);
-			const outOfRange = sw > 1 && hi > sw - 1;
-			const srcTxt = sw > 1 ? `บัสกว้าง ${sw} bit (${sw - 1}:0)` : (dw ? "สายที่เกาะไม่ใช่บัส!" : "ยังไม่ได้เกาะบัส!");
-			const slice = hi === lo ? `(${hi})` : `(${hi}:${lo})`;
-			const dirOpt = d => `<option value="${d}" ${(c.params.dir || "right") === d ? "selected" : ""}>${d}</option>`;
-			root.innerHTML = `<div class="insp">
-        <h3>Bus Tap <span style="color:${outOfRange || sw <= 1 ? "var(--err,#f66)" : "var(--wire-bus)"}">${slice}</span></h3>
-        <div class="row"><label>Position</label>
-          <span><input style="width:62px" id="iX" value="${c.x}"> <input style="width:62px" id="iY" value="${c.y}"></span></div>
-        <div class="row"><label>ต้นทาง</label><span style="color:${sw > 1 ? "var(--muted)" : "var(--err,#f66)"}">${srcTxt}</span></div>
-        <div class="row"><label>บิตบน (hi)</label><input type="number" id="iTapHi" min="0" max="${sw > 1 ? sw - 1 : 63}" value="${c.params.hi ?? 0}"></div>
-        <div class="row"><label>บิตล่าง (lo)</label><input type="number" id="iTapLo" min="0" max="${sw > 1 ? sw - 1 : 63}" value="${c.params.lo ?? 0}"></div>
-        <div class="row"><label>ทิศทาง</label><select id="iTapDir">${["right", "down", "left", "up"].map(dirOpt).join("")}</select></div>
-        <div class="row"><label>ผลลัพธ์</label><span style="font-family:monospace;color:${outOfRange ? "var(--err,#f66)" : "var(--wire-bus)"}">y ⇐ บัส${slice}${outOfRange ? ` — เกินช่วง (${sw - 1}:0)!` : ""}</span></div>
-        <div class="row"><label></label><button class="btn" data-act="delete-sel">🗑 Delete</button></div>
-        <div style="padding:4px 2px;font-size:11px;color:var(--muted)">hi = lo → ดึงบิตเดียว · hi > lo → ดึงช่วงเป็นบัสย่อย</div>
-      </div>`;
-			$("#iX").addEventListener("change", ev => { c.x = snap(+ev.target.value || 0); snapshot(); render(); renderInspector(); });
-			$("#iY").addEventListener("change", ev => { c.y = snap(+ev.target.value || 0); snapshot(); render(); renderInspector(); });
-			const clampBit = v => clamp(Math.round(+v) || 0, 0, sw > 1 ? sw - 1 : 63);
-			$("#iTapHi").addEventListener("change", ev => { c.params.hi = clampBit(ev.target.value); snapshot(); render(); renderInspector(); });
-			$("#iTapLo").addEventListener("change", ev => { c.params.lo = clampBit(ev.target.value); snapshot(); render(); renderInspector(); });
-			$("#iTapDir").addEventListener("change", ev => {
-				// keep the d pin ON its junction when the orientation flips
-				const oldPorts = TYPES.BUSTAP.ports(c.params);
-				const oldD = oldPorts.find(p => p.id === "d");
-				const ax = c.x + oldD.dx, ay = c.y + oldD.dy;   // absolute d position
-				c.params.dir = ev.target.value;
-				const newD = TYPES.BUSTAP.ports(c.params).find(p => p.id === "d");
-				c.x = ax - newD.dx; c.y = ay - newD.dy;
-				snapshot(); render(); renderInspector();
-			});
-			return;
-		}
 		if (c) {
 			const td = typeDef(c);
 			const schema = td && td.paramSchema || [];
@@ -185,6 +146,18 @@ function renderInspector() {
 							while (used.has(v)) v = base + "_" + (kk++);
 							if (v !== base) toast(`ชื่อ '${base}' ถูกใช้แล้ว → เปลี่ยนเป็น '${v}'`, "warn");
 						}
+					}
+					// A Bus Tap's bit only means something against the bus it sits on: bit 5 on
+					// a 2-bit bus is not a number the user can have. Clamp to the live width
+					// (only when it is actually attached — a loose tap may be set freely).
+					if (c.type === "BUSTAP" && k === "bit") {
+						const dw = sch.wires.find(x => x.to.cid === c.id && x.to.pid === "d");
+						const bw = dw ? netWidth(dw, sch) : 0;
+						if (bw > 1 && v > bw - 1) {
+							toast(`บัสเส้นนี้กว้าง ${bw} bit (${bw - 1}:0) — เลือกบิต ${v} ไม่ได้`, "warn", 3200);
+							v = bw - 1;
+						}
+						if (v < 0) v = 0;
 					}
 					c.params = c.params || {};
 					c.params[k] = v;

@@ -248,29 +248,34 @@ const TYPES = {
 		}
 	},
 
-	/* ---------- BUS TAP ----------
-	   ISE hollow-triangle tap that pulls a bit or bit-range off a bus. It has no
-	   width parameter — the input side inherits the width of whichever bus it is
-	   attached to (via netWidth at render / driverWidth in VHDL). hi==lo selects
-	   a single bit; hi>lo an inclusive sub-bus. Set hi/lo in the Inspector. */
+	/* ---------- BUS TAP (ISE style) ----------
+	   Draw the thin wire first and leave its end in open space, then drop a tap on
+	   the bus where the two meet. The tap is a short 45-degree rip: broad base ON
+	   the bus (pin "d"), tip pointing at the thin wire (pin "y").
+	   ONE symbol serves both directions. Which way the bit travels is a property of
+	   the BUS, not of the tap: a bus that has a driver is being SPLIT (the tap reads
+	   bit n out of it), a bus that only ends at an OUTPUT is being MERGED (each tap
+	   writes its bit in). That is what the picture in ISE means, and it keeps the
+	   student from having to pick a mode. */
 	BUSTAP: {
 		label: "Bus Tap", category: "bus",
-		defaultParams: { hi: 0, lo: 0, dir: "right" },
+		defaultParams: { bit: 0, dir: "right", mode: "split" },
 		paramSchema: [
-			{ key: "hi", label: "บิตบน (hi)", type: "int", min: 0, max: 63 },
-			{ key: "lo", label: "บิตล่าง (lo)", type: "int", min: 0, max: 63 },
-			{ key: "dir", label: "ทิศทาง", type: "select", options: ["right", "down", "left", "up"] },
+			{ key: "bit", label: "บิตที่ ", type: "int", min: 0, max: 31 },
+			{ key: "mode", label: "ทิศทางบิต", type: "select", options: ["split", "merge"] },
+			{ key: "dir", label: "หันไปทาง", type: "select", options: ["right", "down", "left", "up"] },
 		],
-		// 33 in the EXTEND direction (easy to grab), 22 ALONG the bus (adjacent taps at a
-		// 22 pitch never overlap). Every port lands on the grid (11/33 = GRID multiples).
+		// 33 in the EXTEND direction (easy to grab), 22 ALONG the bus, so taps sitting
+		// 22 apart on the same bus never overlap. Every pin lands on the 11px grid.
 		size(p) { return (p.dir === "down" || p.dir === "up") ? { w: 22, h: 33 } : { w: 33, h: 22 }; },
 		ports(p) {
-			const hi = Math.max(p.hi ?? 0, p.lo ?? 0), lo = Math.min(p.hi ?? 0, p.lo ?? 0);
-			const ow = hi - lo + 1;                       // width of the tapped output
-			// d.width:2 is only a "this pin is a bus" marker for rendering (a square); the
-			// real bus width is derived live from the attached net. d sits on the bus side,
-			// y (the bit output) on the opposite side.
-			const D = { id: "d", dir: "in", width: 2, label: "" }, Y = { id: "y", dir: "out", width: ow, label: "" };
+			// d = the bus side (width 2 is only a "this is a bus pin" marker for drawing)
+			// split = read a bit OUT of the bus (y drives the thin wire)
+			// merge = write a bit INTO the bus (the thin wire drives y)
+			// d sits on the BASE of the triangle, y at the TIP.
+			const merge = p.mode === "merge";
+			const D = { id: "d", dir: "in", width: 2, label: "" };
+			const Y = { id: "y", dir: merge ? "in" : "out", width: 1, label: "" };
 			switch (p.dir) {
 				case "down": return [{ ...D, dx: 11, dy: 0 }, { ...Y, dx: 11, dy: 33 }];
 				case "up": return [{ ...D, dx: 11, dy: 33 }, { ...Y, dx: 11, dy: 0 }];
@@ -279,19 +284,23 @@ const TYPES = {
 			}
 		},
 		shape(p) {
-			const hi = Math.max(p.hi ?? 0, p.lo ?? 0), lo = Math.min(p.hi ?? 0, p.lo ?? 0);
-			const single = hi === lo;
-			const rng = single ? `(${hi})` : `(${hi}:${lo})`;
-			const tw = single ? 1.5 : 2.2;
+			const bit = p.bit ?? 0;
 			const W = (p.dir === "down" || p.dir === "up") ? 22 : 33;
-			// a CLOSED triangle: broad BASE flush ON the bus (the d side), TIP is the bit
-			// output — an ISE-style rip. Four orientations, label sits above.
+			// a CLOSED triangle: the broad BASE lies flush ON the bus (the d side) and the
+			// TIP points at the thin wire — the ISE rip. Four orientations; the bit number
+			// sits above so a column of taps reads top to bottom.
 			const tri = {
 				right: "M0,0 L33,11 L0,22 Z", left: "M33,0 L0,11 L33,22 Z",
 				down: "M0,0 L11,33 L22,0 Z", up: "M0,33 L11,0 L22,33 Z"
 			}[p.dir] || "M0,0 L33,11 L0,22 Z";
-			return `<path class="glow" d="${tri}" fill="var(--gate-fill)" stroke="var(--wire-bus)" stroke-width="${tw}"/>
-              <text x="${W / 2}" y="-3" text-anchor="middle" font-size="8" fill="var(--ink-dim)">${rng}</text>`;
+			// the bit number goes on the CLEAR side: above a left/right tap, beside an
+			// up/down one — putting it above a vertical tap lands it on the bus stroke
+			const vert = p.dir === "down" || p.dir === "up";
+			const lx = vert ? W + 3 : W / 2, ly = vert ? 13 : -3;
+			const anchor = vert ? "start" : "middle";
+			return `<path class="glow" d="${tri}" fill="var(--gate-fill)" stroke="var(--wire-bus)" stroke-width="1.8"/>
+              <text x="${lx}" y="${ly}" text-anchor="${anchor}" font-size="8"
+                font-family="monospace" fill="var(--ink-dim)">${bit}</text>`;
 		}
 	},
 

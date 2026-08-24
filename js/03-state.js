@@ -5,7 +5,8 @@ function blankSchematic(id, name) {
 		id,
 		name,
 		components: [],
-		wires: []
+		wires: [],
+		locked: false
 	};
 }
 

@@ -33,6 +33,29 @@ function onPortClick(c, p) {
 	const ca = comp(A.cid), cb = comp(B.cid);
 	const aJunc = ca?.type === "JUNCTION";
 	const bJunc = cb?.type === "JUNCTION";
+	/* A Bus Tap's bit pin faces whichever way the signal actually travels, and that
+	   direction was only INFERRED when the tap was dropped (from whatever wire happened
+	   to be waiting). If the user now wires a driver into a split tap — two output pins,
+	   two green dots, "can't connect" — the inference was simply wrong. Turn the tap
+	   around and let the connection happen. Only while its bit pin is still free: once a
+	   wire is on it, flipping would invert that wire's direction under the user. */
+	const flipTap = (T, other) => {
+		const c = comp(T.cid, sch);
+		if (!c || c.type !== "BUSTAP" || T.pid !== "y") return false;
+		if (sch.wires.some(w => (w.from.cid === c.id && w.from.pid === "y") || (w.to.cid === c.id && w.to.pid === "y"))) return false;
+		const want = other.isOut ? "merge" : "split";
+		if (c.params.mode === want) return false;
+		c.params.mode = want;
+		return true;
+	};
+	if (A.isOut === B.isOut && !aJunc && !bJunc && (flipTap(A, B) || flipTap(B, A))) {
+		const ca2 = comp(A.cid, sch), cb2 = comp(B.cid, sch);
+		A.isOut = ((ca2 && getPort(ca2, A.pid)) || {}).dir === "out";
+		B.isOut = ((cb2 && getPort(cb2, B.pid)) || {}).dir === "out";
+		const t = (comp(A.cid, sch) || {}).type === "BUSTAP" ? comp(A.cid, sch) : comp(B.cid, sch);
+		toast(t.params.mode === "merge" ? "สลับ Bus Tap เป็นโหมดรวมบิตเข้าบัสให้แล้ว"
+			: "สลับ Bus Tap เป็นโหมดแตกบิตออกจากบัสให้แล้ว", "ok", 2800);
+	}
 	// Same direction & neither is a junction.
 	if (A.isOut === B.isOut && !aJunc && !bJunc) {
 		if (!A.isOut) {
@@ -269,10 +292,14 @@ function wireOpts(w, sch) {
 function wireRoute(w, p1, p2, opts) {
 	const x1 = Math.round(p1.x), y1 = Math.round(p1.y);
 	const x2 = Math.round(p2.x), y2 = Math.round(p2.y);
-	// explicit user route (waypoints) — draw straight through the corners, any
-	// direction; only auto-elbow the connections to the two ports
-	if (w && w.pts && w.pts.length) {
-		const raw = [{ x: x1, y: y1 }, ...w.pts.map(p => ({ x: Math.round(p.x), y: Math.round(p.y) })), { x: x2, y: y2 }];
+	// explicit route waypoints — draw straight through the corners, any direction;
+	// only auto-elbow the connections to the two ports. The user's hand-drawn route
+	// (w.pts) always wins; w.autoPts is the detour avoidBodies computed to keep the
+	// wire off a symbol, and is recomputed by healLayout rather than owned by the user.
+	const way = (w && w.pts && w.pts.length) ? w.pts
+		: (w && w.autoPts && w.autoPts.length) ? w.autoPts : null;
+	if (way) {
+		const raw = [{ x: x1, y: y1 }, ...way.map(p => ({ x: Math.round(p.x), y: Math.round(p.y) })), { x: x2, y: y2 }];
 		const pts = orthoPolyline(raw, opts ? opts.fromH !== false : true, opts ? opts.toH !== false : true);
 		return { kind: "poly", x1, y1, x2, y2, pts, d: "M" + pts.map(p => `${p.x},${p.y}`).join("L") };
 	}
@@ -522,6 +549,25 @@ function splitWireThroughJunction(w, j, sch = activeSch()) {
 		to: w.to,
 		name: "", width: w.width
 	});
+}
+/* Every wire electrically in the SAME net as w0 — walk UNDIRECTED across JUNCTION
+   endpoints (a net is bounded by real component pins; junctions are just branch
+   points). Returns a Set of wire ids. Used for bit-tracking on a Bus Tap's net and
+   for the driver/loop synthesis checks. */
+function netWires(sch, w0) {
+	sch = sch || activeSch();
+	const net = new Set([w0.id]);
+	const seenJ = new Set(), stack = [];
+	const pushJ = cid => { const c = comp(cid, sch); if (c && c.type === "JUNCTION" && !seenJ.has(cid)) { seenJ.add(cid); stack.push(cid); } };
+	pushJ(w0.from.cid); pushJ(w0.to.cid);
+	while (stack.length) {
+		const jid = stack.pop();
+		sch.wires.forEach(x => {
+			if (net.has(x.id)) return;
+			if (x.from.cid === jid || x.to.cid === jid) { net.add(x.id); pushJ(x.from.cid); pushJ(x.to.cid); }
+		});
+	}
+	return net;
 }
 /* all wires belonging to the net driven by (cid,pid), following junctions */
 function netWiresFrom(sch, cid, pid) {
@@ -851,20 +897,243 @@ function retapBranches(sch) {
 	}
 	healJunctions(sch);
 }
+/* --- keep wires OFF the symbols ------------------------------------------- */
+/* Body boxes of every real symbol. Junctions are points ON a wire, not obstacles —
+   and neither is a BUS TAP: it is mounted FLUSH on its bus by design, so treating it
+   as an obstacle would push the bus trunk off its own tap. */
+function symbolBoxes(sch) {
+	return sch.components.filter(c => c.type !== "JUNCTION").map(c => {
+		const td = typeDef(c), s = td && td.size ? td.size(c.params || {}) : { w: 0, h: 0 };
+		return { id: c.id, x1: c.x, y1: c.y, x2: c.x + s.w, y2: c.y + s.h };
+	});
+}
+/* does an orthogonal run touch a symbol? The box is inflated by BODY_PAD so a wire
+   may not lie ALONG a body edge either — tracing a gate's outline reads as "attached
+   to this gate" just as much as cutting across it. Half a grid is enough: components
+   and tracks are both grid-aligned, so the nearest legal track is one full grid clear. */
+const BODY_PAD = GRID / 2;
+function segCutsBox(seg, b, pad = BODY_PAD) {
+	const X1 = b.x1 - pad, Y1 = b.y1 - pad, X2 = b.x2 + pad, Y2 = b.y2 + pad;
+	if (seg.t === "h") {
+		const lo = Math.min(seg.x1, seg.x2), hi = Math.max(seg.x1, seg.x2);
+		return seg.y > Y1 + 0.5 && seg.y < Y2 - 0.5 && hi > X1 + 0.5 && lo < X2 - 0.5;
+	}
+	const lo = Math.min(seg.y1, seg.y2), hi = Math.max(seg.y1, seg.y2);
+	return seg.x > X1 + 0.5 && seg.x < X2 - 0.5 && hi > Y1 + 0.5 && lo < Y2 - 0.5;
+}
+/* The obstacle set for ONE wire. Every symbol counts, inflated by BODY_PAD — except the
+   two the wire connects, which it must be allowed to REACH. Those are SHRUNK instead of
+   dropped: a pin sits on the body edge, so the approach leg stops at the boundary and
+   reads as clear, while a run that carries on INTO the body is still a crossing.
+   Exempting them outright (the old rule) is why a gate's own input wire could lie
+   straight across it — "มันยังทับสายที่ต่อเป็น input ได้อยู่เลย". */
+const PIN_PAD = -3;
+function obstaclesFor(sch, w, boxes) {
+	const a = comp(w.from.cid, sch), b = comp(w.to.cid, sch);
+	return (boxes || symbolBoxes(sch)).map(bx => {
+		const own = (a && bx.id === a.id) || (b && bx.id === b.id);
+		return { id: bx.id, x1: bx.x1, y1: bx.y1, x2: bx.x2, y2: bx.y2, pad: own ? PIN_PAD : BODY_PAD };
+	});
+}
+const partsCutAny = (parts, obst) => parts.some(seg => obst.some(bx => segCutsBox(seg, bx, bx.pad)));
+/* Would this wire, routed as it stands right now, lie across a symbol? avoidBodies only
+   ever fixes AUTO routes (it skips w.pts on purpose — a hand-drawn route is the user's),
+   so this is what a manual drag checks before it commits. */
+function routeCutsBody(sch, w, boxes) {
+	const a = comp(w.from.cid, sch), b = comp(w.to.cid, sch);
+	if (!a || !b) return false;
+	const p1 = portPos(a, w.from.pid), p2 = portPos(b, w.to.pid);
+	if (!p1 || !p2) return false;
+	return partsCutAny(routeParts(wireRoute(w, p1, p2, wireOpts(w, sch))), obstaclesFor(sch, w, boxes));
+}
+/* Do any of these components (mid-drag) now sit on a wire that isn't theirs? The mirror
+   of routeCutsBody: same rule, checked from the symbol's side, for when it is the GATE
+   being moved rather than the wire. Wires touching any dragged component are exempt —
+   those are its own connections and they follow its pins by design. */
+function compsCoverWire(sch, comps) {
+	const moving = new Set(comps.map(c => c && c.id).filter(Boolean));
+	const boxes = symbolBoxes(sch).filter(b => moving.has(b.id));
+	if (!boxes.length) return false;
+	for (const w of sch.wires) {
+		const a = comp(w.from.cid, sch), b = comp(w.to.cid, sch);
+		if (!a || !b) continue;
+		const p1 = portPos(a, w.from.pid), p2 = portPos(b, w.to.pid);
+		if (!p1 || !p2) continue;
+		const parts = routeParts(wireRoute(w, p1, p2, wireOpts(w, sch)));
+		for (const bx of boxes) {
+			// a wire this symbol OWNS may reach its pins (shrunk box) but still may not be
+			// run through the middle of it; anything else may not be covered at all
+			const own = bx.id === a.id || bx.id === b.id;
+			if (parts.some(seg => segCutsBox(seg, bx, own ? PIN_PAD : BODY_PAD))) return true;
+		}
+	}
+	return false;
+}
+/* The route as an ordered list of corner points (pin → … → pin). */
+function routePoints(r) {
+	const parts = routeParts(r);
+	if (!parts.length) return [{ x: r.x1, y: r.y1 }, { x: r.x2, y: r.y2 }];
+	const pts = [];
+	parts.forEach((p, i) => {
+		const a = p.t === "h" ? { x: p.x1, y: p.y } : { x: p.x, y: p.y1 };
+		const b = p.t === "h" ? { x: p.x2, y: p.y } : { x: p.x, y: p.y2 };
+		if (i === 0) pts.push(a);
+		pts.push(b);
+	});
+	return pts;
+}
+/* Move segment i of a route perpendicular to itself to `val`, keeping BOTH pins
+   exactly where they are (a segment touching a pin grows a new leg instead of
+   dragging the pin along). Returns the interior waypoints for w.pts. */
+function segmentMovePts(base, i, t, val) {
+	const atStart = (i === 0), atEnd = (i + 1 === base.length - 1);
+	const pts = base.map(p => ({ x: p.x, y: p.y }));
+	if (t === "h") { pts[i].y = val; pts[i + 1].y = val; }
+	else { pts[i].x = val; pts[i + 1].x = val; }
+	if (atStart) pts.unshift({ x: base[0].x, y: base[0].y });
+	if (atEnd) pts.push({ x: base[base.length - 1].x, y: base[base.length - 1].y });
+	return pts.slice(1, -1);
+}
+/* A wire drawn straight through a gate reads as if it connects to it — the schematic
+   lies. Bend any wire that cuts a symbol around it: first by sliding the adjustable
+   leg a z/s route already has (cheap, keeps the shape), else by moving the blocked run
+   to a clear track with the SAME mechanism a manual drag uses (segmentMovePts), stored
+   in w.autoPts so it never masquerades as a hand-drawn route. */
+function avoidBodies(sch) {
+	sch = sch || activeSch();
+	const boxes = symbolBoxes(sch);
+	if (boxes.length < 2) return;
+	for (const w of sch.wires) {
+		if (w.pts && w.pts.length) continue;          // hand-routed → the user's call, never touch
+		delete w.autoPts;                            // always recompute from the clean auto route
+		const a = comp(w.from.cid, sch), b = comp(w.to.cid, sch);
+		if (!a || !b) continue;
+		const p1 = portPos(a, w.from.pid), p2 = portPos(b, w.to.pid);
+		if (!p1 || !p2) continue;
+		// its own two symbols are shrunk, not dropped: it must reach their pins, but it
+		// may not run THROUGH them (that is what left an input wire lying across its gate)
+		const obst = obstaclesFor(sch, w, boxes);
+		if (!obst.length) continue;
+		const routeNow = () => wireRoute(w, p1, p2, wireOpts(w, sch));
+		const blocked = r => partsCutAny(routeParts(r), obst);
+		let r = routeNow();
+		if (!blocked(r)) continue;
+
+		// (1) cheapest: slide the leg a z/s route already has, keeping its shape
+		if (r.kind === "z" || r.kind === "s") {
+			const isZ = r.kind === "z", key = isZ ? "mx" : "my", old = w[key];
+			const lo = isZ ? Math.min(r.x1, r.x2) + WIRE_MINLEG : Math.min(r.y1, r.y2) + WIRE_MINLEG;
+			const hi = isZ ? Math.max(r.x1, r.x2) - WIRE_MINLEG : Math.max(r.y1, r.y2) - WIRE_MINLEG;
+			const cur = isZ ? r.mx : r.my;
+			let found;
+			for (let d = 1; d * GRID <= (hi - lo) && found === undefined; d++) {
+				for (const v of [cur - d * GRID, cur + d * GRID]) {
+					if (v < lo || v > hi) continue;
+					w[key] = snap(v);
+					if (!blocked(routeNow())) { found = w[key]; break; }
+				}
+			}
+			if (found !== undefined) continue;
+			if (old === undefined) delete w[key]; else w[key] = old;
+			r = routeNow();
+		}
+
+		// (2) otherwise bend the blocked run onto a clear track, nearest side first
+		for (let pass = 0; pass < 3; pass++) {
+			const parts = routeParts(r);
+			const idx = parts.findIndex(seg => obst.some(bx => segCutsBox(seg, bx, bx.pad)));
+			if (idx < 0) break;
+			const seg = parts[idx];
+			const base = routePoints(r);
+			const cur = seg.t === "h" ? seg.y : seg.x;
+			// Walk OUTWARD on the grid for the nearest track that clears every symbol —
+			// checking the WHOLE re-route each time, so the new legs can't cut something
+			// else. Trying only "just above / just below this blocker" ping-pongs forever
+			// between two blocked gaps when the symbols form a wall.
+			let cleared = false;
+			for (let d = 1; d <= 60 && !cleared; d++) {
+				for (const v of [cur - d * GRID, cur + d * GRID]) {
+					w.autoPts = segmentMovePts(base, idx, seg.t, snap(v));
+					const r2 = routeNow();
+					if (!blocked(r2)) { r = r2; cleared = true; break; }
+				}
+			}
+			if (cleared) break;
+			delete w.autoPts;      // nowhere clear — a plain route beats a random zigzag
+			r = routeNow();
+			break;
+		}
+		if (w.autoPts && !w.autoPts.length) delete w.autoPts;
+	}
+}
+/* pts / autoPts / mx / my are ABSOLUTE canvas coordinates, not offsets from the pins.
+   A copy that clones them verbatim keeps its corners at the SOURCE position while its
+   pins move, so the wire arrives folded across the sheet. Move them with the drawing. */
+function translateWire(w, dx, dy) {
+	const mv = a => a.map(p => ({ x: p.x + dx, y: p.y + dy }));
+	if (w.pts && w.pts.length) w.pts = mv(w.pts);
+	if (w.autoPts && w.autoPts.length) w.autoPts = mv(w.autoPts);
+	if (typeof w.mx === "number") w.mx += dx;
+	if (typeof w.my === "number") w.my += dy;
+	return w;
+}
+/* The auto z/s jog picks its column from the wire's ABSOLUTE row (row % fan), so the
+   very same shape drawn a few rows lower jogs somewhere else. That is fine while you
+   draw, but a copy has to look like what was copied — so pin the jog the source is
+   actually showing onto the clone before it moves. */
+function freezeAutoRoute(clone, src, sch) {
+	const A = comp(src.from.cid, sch), B = comp(src.to.cid, sch);
+	if (!A || !B) return clone;
+	const p1 = portPos(A, src.from.pid), p2 = portPos(B, src.to.pid);
+	if (!p1 || !p2) return clone;
+	const r = wireRoute(src, p1, p2, wireOpts(src, sch));
+	if (r && r.kind === "z" && typeof clone.mx !== "number") clone.mx = r.mx;
+	if (r && r.kind === "s" && typeof clone.my !== "number") clone.my = r.my;
+	return clone;
+}
+/* USER-VISIBLE LAYOUT LOCK.
+   While a sheet is locked nothing rearranges itself: no dot is re-tapped or slid, no
+   route is auto-detoured around a body, no overlapping runs are separated. Wires still
+   follow the pins they are attached to — that is geometry, not layout — and junctions
+   still heal STRUCTURALLY (an orphan dot is still removed), which is picture-preserving.
+   The one-shot "↻ Relayout" button routes around the lock when the user actually asks
+   for a tidy-up. The global 🐞 auto-arrange debug toggle is a separate kill-switch that
+   suppresses the same passes project-wide, independent of any sheet's lock state. */
+function layoutLocked(sch) { return !!((sch || activeSch() || {}).locked); }
+/* say WHY the thing under the cursor won't move — but only once in a while, so a few
+   frustrated drags don't bury the screen in toasts */
+let _lockNudgeAt = 0;
+function lockedNudge() {
+	const now = (typeof performance !== "undefined" && performance.now) ? performance.now() : 0;
+	if (now - _lockNudgeAt < 2500) return;
+	_lockNudgeAt = now;
+	toast("🔒 แผ่นนี้ล็อกการจัดวางอยู่ — กดไอคอนกุญแจเพื่อปลดล็อกก่อนย้าย", "warn", 2600);
+}
+/* same idea for a drag that would put a wire on top of a symbol — the gesture keeps
+   running, the wire just refuses to go there, and we say why (rarely) */
+let _bodyNudgeAt = 0;
+function bodyBlockNudge() {
+	const now = (typeof performance !== "undefined" && performance.now) ? performance.now() : 0;
+	if (now - _bodyNudgeAt < 2500) return;
+	_bodyNudgeAt = now;
+	toast("สายไฟลากทับ component ไม่ได้ — เส้นจะอ่านเหมือนต่อเข้ากับตัวนั้น", "warn", 2600);
+}
 /* the ONE canonical layout pass, always in this order: put each branch's dot at the
    real divergence, align fan-out dots, reflow overlapping exits, separate
    different-net runs, then HEAL LAST so any adjacency the movers created (coincident
    dots, zero-length stubs) is merged before render — never leave a healer artifact on
-   screen waiting for the "next edit". */
-function healLayout(sch) {
+   screen waiting for the "next edit". Locked (per-sheet, or the global debug toggle)
+   skips the rearranging passes and only heals structurally, unless `force` (the
+   one-shot ↻ Relayout action) overrides the lock. */
+function healLayout(sch, force) {
 	sch = sch || activeSch();
-	if (AUTO_ARRANGE) {
-		retapBranches(sch);
-		alignJunctionBranch(sch);
-		reflowJunctions(sch);
-		separateWireOverlaps(sch);
-	}
+	if (!force && (layoutLocked(sch) || !AUTO_ARRANGE)) { healJunctions(sch); return; }
+	retapBranches(sch);
+	alignJunctionBranch(sch);
+	reflowJunctions(sch);
+	separateWireOverlaps(sch);
 	healJunctions(sch);
+	avoidBodies(sch);
 }
 
 /* ISE behaviour: a port drives ONE wire; further connections branch off the
@@ -909,6 +1178,40 @@ function branchFromNet(sch, fromPort, toPort) {
 	splitWireThroughJunction(best.w, j, sch);
 	sch.wires.push({ id: uid("w"), from: { cid: j.id, pid: "j" }, to: { cid: toPort.cid, pid: toPort.pid }, name: "" });
 	return true;
+}
+/* Bits pushed ONTO a bus by merge taps count as driving it. A tap with no mode
+   recorded (an old file) is assumed to drive: a missed warning costs far less than
+   flagging a working design. */
+function netMergeDriven(sch, w) {
+	for (const id of netWires(sch, w)) {          // netWires returns a Set, not an array
+		const x = sch.wires.find(y => y.id === id);
+		if (!x) continue;
+		const hit = [x.from, x.to].some(ep => {
+			const c = comp(ep.cid, sch);
+			return !!c && c.type === "BUSTAP" && (c.params || {}).mode !== "split";
+		});
+		if (hit) return true;
+	}
+	return false;
+}
+/* Does anything actually DRIVE this net? netDriverPort() returns the dangling junction
+   itself when a wire just stops in open space, which reads as "yes" — so a stub hanging
+   off an OUTPUT looked connected while the generator, finding no source, wrote
+   `(others => '0')`. Walk the same chain but answer false when it ends on a bare dot. */
+function netHasDriver(sch, w, seen) {
+	// A bus being ASSEMBLED bit by bit is the exception: the user draws the bus stub from
+	// the OUT first and then drops merge taps onto it, so its far end legitimately dangles
+	// while the taps drive q(0), q(1)… Reading that as undriven marks every merge circuit
+	// in the app as broken, so ask the taps before walking the wire.
+	if (!seen && netMergeDriven(sch, w)) return true;
+	seen = seen || new Set();
+	const src = comp(w.from.cid, sch);
+	if (!src) return false;
+	if (src.type !== "JUNCTION") return true;              // a real port feeds it
+	if (seen.has(src.id)) return false;
+	seen.add(src.id);
+	const up = sch.wires.find(x => x.to.cid === src.id);
+	return up ? netHasDriver(sch, up, seen) : false;      // a dot with nothing coming in
 }
 /* the ultimate driving port of the net that wire w belongs to (traces w.from
    back through junctions to a real output port) */

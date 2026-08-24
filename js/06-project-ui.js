@@ -196,7 +196,7 @@ function renderPalette() {
 		["mux", "MUX / DEMUX"],
 		["code", "ENCODER / DECODER"],
 		["ff", "FLIP-FLOPS"],
-		// BUS DISABLED (commented out): ["bus",  "BUS TOOLS"],
+		["bus", "BUS TAP"],
 	];
 	const html = [`<div class="palette">`];
 	for (const [cat, name] of groups) {

@@ -201,6 +201,83 @@ function buildSchematicFromVhdl(ast) {
 	Object.keys(cols).forEach(d => { cols[d].forEach((c, i) => { c.x = snap(X0 + (+d) * COLW); c.y = snap(Y0 + i * ROWH); delete c.depth; }); });
 	return { comps, wires, unresolved: [...new Set(need.filter(nd => !driver[nd.net]).map(nd => nd.net))] };
 }
+/* base64 → the original UTF-8 string (inverse of utf8ToB64 in 13-vhdl-generator.js) */
+function b64ToUtf8(b) {
+	const bin = atob(b);
+	const bytes = new Uint8Array(bin.length);
+	for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+	return new TextDecoder().decode(bytes);
+}
+/* Find and decode the layoutStamp() comment block, if this file has one. Returns
+   null for hand-written VHDL (no markers, or a block that fails to parse) so the
+   caller falls back to the AST rebuild exactly as before. */
+function readLayoutStamp(text) {
+	const i = text.indexOf(LAYOUT_TAG_BEGIN), j = text.indexOf(LAYOUT_TAG_END);
+	if (i < 0 || j <= i) return null;
+	const b64 = text.slice(i + LAYOUT_TAG_BEGIN.length, j)
+		.split("\n").map(l => l.replace(/^\s*--\s?/, "").trim()).join("");
+	try {
+		const o = JSON.parse(b64ToUtf8(b64));
+		return (o && Array.isArray(o.schematics) && o.schematics.length) ? o : null;
+	} catch (e) { return null; }
+}
+/* Bring stamped schematics — and any custom components they depend on — into the
+   CURRENT project without disturbing it: fresh ids throughout (so importing the
+   same file twice cannot collide with what is already open), names made unique,
+   and every sub-block ("SCH:<id>") / custom-component ("CUSTOM:<name>") reference
+   repointed to match. Restoring customs too (the stamp carries them) avoids the
+   dangling "CUSTOM:<name>" a schematic-only restore would otherwise leave behind. */
+function adoptSchematics(list, customs) {
+	const idMap = new Map();
+	list.forEach(s => { if (s && s.id) idMap.set(s.id, uid("sch")); });
+	// merge stamped customs first (collision → same rename pattern importCustomComponent
+	// uses) so CUSTOM: references below can be repointed at their live names
+	const nameMap = new Map();      // stamped custom name → live project name
+	if (customs) Object.values(customs).forEach(cc => {
+		if (!cc || !cc.name) return;
+		let nm = cc.name, k = 1;
+		while (state.project.customs[nm]) nm = cc.name + "_" + (k++);
+		nameMap.set(cc.name, nm);
+	});
+	if (customs) Object.values(customs).forEach(cc => {
+		if (!cc || !cc.name) return;
+		const ncc = JSON.parse(JSON.stringify(cc));
+		ncc.name = nameMap.get(cc.name);
+		if (ncc.schematic) (ncc.schematic.components || []).forEach(c => {
+			if (c.type && c.type.startsWith("CUSTOM:")) {
+				const dep = c.type.slice(7);
+				if (nameMap.has(dep)) c.type = "CUSTOM:" + nameMap.get(dep);
+			}
+		});
+		state.project.customs[ncc.name] = ncc;
+	});
+	const added = [];
+	list.forEach(s => {
+		if (!s || !Array.isArray(s.components)) return;
+		const ns = JSON.parse(JSON.stringify(s));
+		ns.id = idMap.get(s.id) || uid("sch");
+		ns.name = uniqueSchName(s.name || "imported", ns.id);
+		const cmap = new Map();
+		ns.components.forEach(c => {
+			const nid = uid("c"); cmap.set(c.id, nid); c.id = nid;
+			if (typeof c.type === "string" && c.type.indexOf("SCH:") === 0) {
+				const t = idMap.get(c.type.slice(4)); if (t) c.type = "SCH:" + t;
+			} else if (typeof c.type === "string" && c.type.indexOf("CUSTOM:") === 0 && nameMap.has(c.type.slice(7))) {
+				c.type = "CUSTOM:" + nameMap.get(c.type.slice(7));
+			}
+		});
+		(ns.wires || []).forEach(w => {
+			w.id = uid("w");
+			if (cmap.has(w.from.cid)) w.from.cid = cmap.get(w.from.cid);
+			if (cmap.has(w.to.cid)) w.to.cid = cmap.get(w.to.cid);
+		});
+		const live = new Set(ns.components.map(c => c.id));
+		ns.wires = (ns.wires || []).filter(w => live.has(w.from.cid) && live.has(w.to.cid));
+		state.project.schematics[ns.id] = ns;
+		added.push(ns);
+	});
+	return added;
+}
 function importVhdlFile() {
 	const inp = document.createElement("input");
 	inp.type = "file"; inp.accept = ".vhd,.vhdl,.txt";
@@ -209,6 +286,27 @@ function importVhdlFile() {
 		const r = new FileReader();
 		r.onload = () => {
 			try {
+				// a file this app exported carries the drawing itself — restore it verbatim
+				// rather than re-deriving a layout from the code
+				const stamp = readLayoutStamp(r.result);
+				if (stamp) {
+					const added = adoptSchematics(stamp.schematics, stamp.customs);
+					if (added.length) {
+						let want = null;
+						try {
+							const ent = (parseVhdl(r.result).entity || "").toLowerCase();
+							want = added.find(s => sanId(s.name).toLowerCase() === ent);
+						} catch (_) { }
+						want = want || added.find(s => s.id === stamp.topId) || added[0];
+						reseedUid();
+						if (!state.project.schOrder) state.project.schOrder = [];
+						added.forEach(s => { if (!state.project.schOrder.includes(s.id)) state.project.schOrder.push(s.id); });
+						openSchTab(want.id); snapshot(); renderAll();
+						try { zoomFit(); } catch (_) { }
+						toast(`นำเข้าพร้อมการจัดวางเดิม — ${added.length} schematic, ${want.components.length} components`, "ok", 4200);
+						return;
+					}
+				}
 				const ast = parseVhdl(r.result);
 				if (!ast.ports.length && !ast.stmts.length) { toast("ไม่พบ entity/logic ในไฟล์นี้", "err", 3500); return; }
 				const built = buildSchematicFromVhdl(ast);

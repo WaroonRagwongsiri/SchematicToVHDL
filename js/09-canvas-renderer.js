@@ -24,6 +24,14 @@ function render() {
 	const sch = activeSch();
 	while (canvas.firstChild) canvas.removeChild(canvas.firstChild);
 	syncGridBg();
+	const lockBtn = $("#btnLockLayout");
+	if (lockBtn) {
+		const on = !!(sch && sch.locked);
+		lockBtn.textContent = on ? "🔒" : "🔓";
+		lockBtn.classList.toggle("active", on);
+		lockBtn.title = on ? "ล็อกการจัดวางอยู่ — คลิกเพื่อปลดล็อก (ระบบจะกลับมาช่วยจัดสาย)"
+			: "ล็อกการจัดวาง — สายและจุดจะอยู่กับที่ ไม่มีการจัดใหม่อัตโนมัติ";
+	}
 	if (!sch) return;
 
 	const root = el("g", { transform: `translate(${state.view.x},${state.view.y}) scale(${state.view.k})` });
@@ -53,7 +61,7 @@ function render() {
 		if (wireRoutes.has(w.id)) return;
 		const pp = wireEnds(w); if (!pp) return;
 		const r = wireRoute(w, pp[0], pp[1], wireOpts(w));
-		if (AUTO_ARRANGE) {
+		if (AUTO_ARRANGE && !layoutLocked(sch)) {
 			const lo = r.x1 + WIRE_MINLEG, hi = r.x2 - WIRE_MINLEG;
 			const yA = Math.min(r.y1, r.y2), yB = Math.max(r.y1, r.y2);
 			const collide = x => usedV.some(s => Math.abs(s.x - x) < 8 && yA < s.y2 && yB > s.y1);
@@ -108,14 +116,7 @@ function render() {
 			if (state.spaceDown) { startPan(ev); return; }
 			// ISE modal tools act on wires directly
 			if (state.tool === "netname") { applyWireName(w, prompt("ตั้งชื่อสาย (บัสต้องลากจากพอร์ต >1 bit ของ component):", w.name || "")); return; }
-			if (state.tool === "bus") {
-				// Bus tool on a wire: bus → tap the next bit; a non-bus wire is NOT
-				// converted — a bus must originate from a component port (drag from a
-				// >1-bit pin), never be conjured onto a plain wire.
-				if (netWidth(w) > 1) stampTapOnWire(w, svgPoint(ev));
-				else toast("สายนี้ไม่ใช่บัส — สร้างบัสโดยลากจากพอร์ต >1 bit ของ component", "info", 3000);
-				return;
-			}
+			if (state.tool === "bustap") { stampTapOnWire(w, svgPoint(ev)); return; }
 			if (state.tool === "iomarker") return;
 			if (state.tool === "wire") { tapWire(w, svgPoint(ev)); return; }   // branch from / finish at this wire
 			// tap-on-wire: if user is currently drawing a wire, clicking on an
@@ -124,6 +125,7 @@ function render() {
 			// shift+alt+click → tap (start a new wire from this point on the wire)
 			if (ev.shiftKey && ev.altKey) { tapWire(w, svgPoint(ev)); return; }
 			// click = select (on mouseup); drag = move the adjustable segment
+			if (layoutLocked()) { lockedNudge(); return; }
 			state.wireDrag = { w, kind: r.kind, m0: svgPoint(ev), moved: false, shift: ev.shiftKey };
 		});
 		hit.addEventListener("dblclick", ev => {
@@ -153,6 +155,7 @@ function render() {
 				h.style.cursor = "move";
 				h.addEventListener("mousedown", ev => {
 					if (ev.button !== 0) return; ev.stopPropagation();
+					if (layoutLocked()) { lockedNudge(); return; }
 					state.cornerDrag = { w, index: idx };
 				});
 				g.appendChild(h);
@@ -331,7 +334,7 @@ function render() {
 					if (state.spaceDown) { startPan(ev); return; }
 					if (state.tool === "netname") return;
 					if (state.tool === "iomarker") { toast("ขานี้มีสายต่ออยู่แล้ว", "warn"); return; }
-					if (state.tool === "bus") { toast("คลิกบนตัวสายบัส (เยื้องจากจุดต่อ) เพื่อวาง Bus Tap", "info", 2400); return; }
+					if (state.tool === "bustap") { toast("คลิกบนตัวสายบัส (เยื้องจากจุดต่อ) เพื่อวาง Bus Tap", "info", 2400); return; }
 					onPortClick(c, p);
 				});
 				g.appendChild(pg);
@@ -356,10 +359,7 @@ function render() {
 				if (state.spaceDown) { startPan(ev); return; }
 				if (state.tool === "iomarker") { addIOMarkerAt(c, p); return; }
 				if (state.tool === "netname") return;
-				// Bus tool: drag a wire OUT from this component port — the ONLY way to
-				// make a bus (a >1-bit port yields a bus wire; a 1-bit port a plain wire)
-				if (state.tool === "bus") { onPortClick(c, p); if (state.pendingWire && (p.width || 1) > 1) toast("ลากสายบัสออกจากพอร์ต — คลิกวางมุม/พอร์ตปลายทาง", "info", 2600); return; }
-				onPortClick(c, p);   // select & wire modes
+				onPortClick(c, p);   // select & wire modes — a >1-bit port yields a bus wire
 			});
 			g.appendChild(pg);
 			if (p.label) {
@@ -368,6 +368,20 @@ function render() {
 				g.appendChild(txt(lx, p.dy + 3, p.label, { anchor: an, size: 9, fill: "var(--ink-dim)" }));
 			}
 		});
+
+		/* Text must stay READABLE however the symbol is turned. The node group carries
+		   the rotate/mirror, so every label inside it — a gate's name, its pin labels, a
+		   Bus Tap's bit number — gets flipped with the artwork and comes out mirrored or
+		   upside down. Cancel just the rotation/reflection on each text, about its OWN
+		   anchor point, so it keeps the position the transform gave it but reads straight. */
+		if (rot || c.mirror) {
+			const inv = c.mirror ? "scale(-1 1) " : "";
+			g.querySelectorAll("text").forEach(t => {
+				const tx = +t.getAttribute("x") || 0, ty = +t.getAttribute("y") || 0;
+				t.setAttribute("transform",
+					`translate(${tx} ${ty}) ${inv}rotate(${-rot}) translate(${-tx} ${-ty})`);
+			});
+		}
 
 		root.appendChild(g);
 	});

@@ -173,6 +173,32 @@ function generateSchVhdl(sch) {
 	const concurrent = [];
 	const processes = [];
 	const subInstances = [];
+	const busMerges = [];        // "B(3) <= sig;" lines from merge taps
+	/* The signal a merge tap writes into: follow its bus pin through the junctions to
+	   whatever real port sits on that net. An OUTPUT marker gives its own name. */
+	function busSignalOf(tap) {
+		const seen = new Set();
+		const walk = cid => {
+			if (seen.has(cid)) return null;
+			seen.add(cid);
+			for (const w of sch.wires) {
+				const ends = [[w.from, w.to], [w.to, w.from]];
+				for (const [a, b] of ends) {
+					if (a.cid !== cid) continue;
+					const oc = comp(b.cid, sch);
+					if (!oc) continue;
+					if (oc.type === "JUNCTION") { const r = walk(oc.id); if (r) return r; }
+					else if (oc.type === "OUT") return oc._net;
+					else if (oc._nets && oc._nets[b.pid]) return oc._nets[b.pid];
+				}
+			}
+			return null;
+		};
+		const dw = sch.wires.find(w => w.to.cid === tap.id && w.to.pid === "d");
+		if (!dw) return null;
+		const j = comp(dw.from.cid, sch);
+		return j ? (j.type === "JUNCTION" ? walk(j.id) : (j._nets && j._nets[dw.from.pid]) || null) : null;
+	}
 
 	inners.forEach(c => {
 		const td = typeDef(c); if (!td) return;
@@ -230,24 +256,27 @@ function generateSchVhdl(sch) {
 			}
 			return;
 		}
-		/* ----- BUS TAP (slice a hi:lo range off the attached bus) ----- */
+		/* ----- BUS TAP: one bit in or out of a bus ----- */
 		if (c.type === "BUSTAP") {
-			const hi = Math.max(c.params.hi ?? 0, c.params.lo ?? 0);
-			const lo = Math.min(c.params.hi ?? 0, c.params.lo ?? 0);
-			const ow = hi - lo + 1;
-			const src = driver(c.id, "d");
+			const bit = c.params.bit ?? 0;
 			const sw = driverWidth(c.id, "d");   // real bus width, traced live
-			let expr = null;
-			if (!src) {
-				warns.push(`${compDisplay(c)} ยังไม่ได้เกาะกับสายบัส — ใช้ค่า '0' แทน`);
-			} else if (!sw || sw <= 1) {
-				warns.push(`${compDisplay(c)} ต้องเกาะกับสายบัส (กว้าง > 1 bit) แต่ได้สัญญาณ ${sw || 1} bit — ใช้ค่า '0' แทน`);
-			} else if (hi > sw - 1) {
-				warns.push(`${compDisplay(c)} เลือกบิต (${hi}${hi === lo ? "" : ":" + lo}) เกินช่วงบัสต้นทาง (${sw - 1}:0) — ใช้ค่า '0' แทน`);
-			} else {
-				expr = hi === lo ? `${src}(${hi})` : `${src}(${hi} downto ${lo})`;
+			if (c.params.mode === "merge") {
+				// the bus is assembled FROM taps: write this bit. Handled with the output
+				// assignments below (busMerges) so it lands after the bus signal exists.
+				const v = driver(c.id, "y");
+				const busSig = busSignalOf(c);
+				if (!busSig) warns.push(`${compDisplay(c)} ยังไม่ได้เกาะกับสายบัส`);
+				else if (!v) warns.push(`${compDisplay(c)} ยังไม่มีสัญญาณเข้าขาบิต`);
+				else busMerges.push(`  ${busSig}(${bit}) <= ${v};`);
+				return;
 			}
-			concurrent.push(`  ${c._nets.y} <= ${expr || zlit(ow)};`);
+			const src = driver(c.id, "d");
+			let expr = null;
+			if (!src) warns.push(`${compDisplay(c)} ยังไม่ได้เกาะกับสายบัส — ใช้ค่า '0' แทน`);
+			else if (!sw || sw <= 1) warns.push(`${compDisplay(c)} ต้องเกาะกับสายบัส (กว้าง > 1 bit) แต่ได้สัญญาณ ${sw || 1} bit — ใช้ค่า '0' แทน`);
+			else if (bit > sw - 1) warns.push(`${compDisplay(c)} เลือกบิต (${bit}) เกินช่วงบัสต้นทาง (${sw - 1}:0) — ใช้ค่า '0' แทน`);
+			else expr = `${src}(${bit})`;
+			concurrent.push(`  ${c._nets.y} <= ${expr || "'0'"};`);
 			return;
 		}
 		/* ----- ENCODER (priority) ----- */
@@ -407,9 +436,14 @@ function generateSchVhdl(sch) {
 	const outLines = [];
 	outputs.forEach(c => {
 		const v = driver(c.id, "i");
+		// a bus built up bit by bit by merge taps has no single driver — the taps ARE
+		// its drivers, so leaving it unassigned here is correct, not an omission
+		const byTaps = busMerges.some(l => l.trim().startsWith(c._net + "("));
+		if (byTaps) return;
 		if (!v) { warns.push(`OUTPUT '${c._net}' ยังไม่ได้ต่อสาย — ใช้ค่า '0' แทน`); outLines.push(`  ${c._net} <= ${zlit(c.params.width)};`); }
 		else outLines.push(`  ${c._net} <= ${v};`);
 	});
+	busMerges.forEach(l => outLines.push(l));
 
 	/* ---- assemble ---- */
 	const portDecls = [];
@@ -606,6 +640,33 @@ function vhdlHighlight(code) {
 $("#vhdlEntitySel")?.addEventListener("change", ev => {
 	showVhdlFor(ev.target.value);
 });
+/* base64 an arbitrary UTF-8 string (schematic JSON can contain Thai labels) —
+   chunk-free: ids/coords stay small so this never hits a call-stack limit. */
+function utf8ToB64(s) {
+	const bytes = new TextEncoder().encode(s);
+	let bin = "";
+	bytes.forEach(b => { bin += String.fromCharCode(b); });
+	return btoa(bin);
+}
+/* Wrap the WHOLE project (every schematic, every custom, and the top id) as a
+   base64 blob inside a plain VHDL comment block — Vivado ignores it entirely, but
+   Import VHDL recognizes the markers and restores the exact drawing instead of
+   re-deriving one from the code. Never let a stamping failure break the export. */
+function layoutStamp() {
+	try {
+		const p = state.project;
+		const payload = { v: 1, schematics: Object.values(p.schematics), customs: p.customs || {}, topId: p.topId };
+		const b64 = utf8ToB64(JSON.stringify(payload));
+		return ["",
+			"-- ============================================================",
+			"-- Schematic Studio — ข้อมูลการจัดวางวงจร (layout)",
+			"-- เป็นคอมเมนต์ล้วน ไม่มีผลต่อการสังเคราะห์: Vivado ข้ามทั้งบล็อกนี้",
+			"-- มีไว้ให้ Import VHDL กลับแล้วได้ gate เดิมและตำแหน่งเดิม (อย่าแก้ด้วยมือ)",
+			LAYOUT_TAG_BEGIN,
+			...(b64.match(/.{1,76}/g) || [b64]).map(l => "-- " + l),
+			LAYOUT_TAG_END, ""].join("\n");
+	} catch (e) { return ""; }         // never let the stamp break an export
+}
 function exportVhdlFile() {
 	if (!_lastAllVhdl) generateVHDL();
 	const code = $("#vhdlOutput").dataset.raw || "";
@@ -614,12 +675,12 @@ function exportVhdlFile() {
 	let fname;
 	if (v === "__all__") fname = sanId(state.project.name || "project") + "_all.vhd";
 	else fname = sanId(v) + ".vhd";
-	const b = new Blob([code], { type: "text/plain" });
+	const b = new Blob([code + layoutStamp()], { type: "text/plain" });
 	const u = URL.createObjectURL(b);
 	const a = document.createElement("a");
 	a.href = u; a.download = fname; a.click();
 	URL.revokeObjectURL(u);
-	toast("Downloaded " + fname, "ok");
+	toast("Downloaded " + fname + " (แนบการจัดวางไว้ในคอมเมนต์ — import กลับได้เหมือนเดิม)", "ok", 3600);
 }
 function exportAllVhdl() {
 	const all = generateAllVhdl();

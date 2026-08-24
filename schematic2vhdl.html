@@ -97,11 +97,16 @@
 								title="Add Wire (W) — คลิกพอร์ต→พอร์ต ต่อสาย, คลิกกลางสาย = แยกสาย">╱</button>
 							<button data-tool="netname"
 								title="Add Net Name (N) — คลิกสายเพื่อตั้งชื่อ · พิมพ์ data(7:0) เพื่อกำหนดบัส">ab</button>
-							<!-- BUS DISABLED (commented out): <button data-tool="bus" title="Add Bus (B)">≣</button> -->
+							<button data-tool="bustap"
+								title="Bus Tap (B) — คลิกบนสายบัสตรงจุดที่ต้องการดึงบิต">≣</button>
 							<button data-tool="iomarker"
 								title="Add I/O Marker (I) — คลิกขาที่ว่างเพื่อติด INPUT/OUTPUT">⇥</button>
 							<hr>
 							<button data-tool="symbol" title="Add Symbol — เปิดแผง Components">⊞</button>
+							<hr>
+							<button data-act="lock-layout" id="btnLockLayout"
+								title="ล็อกการจัดวาง — สายและจุดจะอยู่กับที่ ไม่มีการจัดใหม่อัตโนมัติ">🔓</button>
+							<button data-act="relayout" id="btnRelayout" title="จัดสายใหม่ทั้งแผ่น (ทำครั้งเดียวตามสั่ง)">↻</button>
 						</div>
 						<div class="canvas-tools">
 							<button data-act="zoom-out" title="Zoom out">−</button>
