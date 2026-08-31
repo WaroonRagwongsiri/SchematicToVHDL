@@ -531,24 +531,73 @@ function createJunctionOnWire(w, point) {
 	sch.components.push(j);
 	return { j, seg: at.seg };
 }
+/* Where does pt (a point known to lie ON r's route) fall among r.pts? Returns the
+   corner points strictly before / strictly after it, so a split poly wire keeps
+   the correct corners on each side of the new junction. r.pts already runs
+   [p1, ...corners, p2], and routeParts(r) walks the same array pairwise, so the
+   matched segment index tells us exactly where to cut. */
+function splitPolyAtPoint(r, pt) {
+	const parts = routeParts(r);
+	for (let i = 0; i < parts.length; i++) {
+		const part = parts[i];
+		if (part.t === "h") {
+			const lo = Math.min(part.x1, part.x2) - 0.5, hi = Math.max(part.x1, part.x2) + 0.5;
+			if (Math.abs(pt.y - part.y) < 1 && pt.x >= lo && pt.x <= hi) {
+				return { firstPts: r.pts.slice(1, i + 1), secondPts: r.pts.slice(i + 1, r.pts.length - 1) };
+			}
+		} else {
+			const lo = Math.min(part.y1, part.y2) - 0.5, hi = Math.max(part.y1, part.y2) + 0.5;
+			if (Math.abs(pt.x - part.x) < 1 && pt.y >= lo && pt.y <= hi) {
+				return { firstPts: r.pts.slice(1, i + 1), secondPts: r.pts.slice(i + 1, r.pts.length - 1) };
+			}
+		}
+	}
+	return null;
+}
 function splitWireThroughJunction(w, j, sch = activeSch()) {
 	const idx = sch.wires.indexOf(w);
 	if (idx < 0) return;
+	// capture the route w is ACTUALLY showing before it's torn apart — otherwise the
+	// two new halves get re-routed from scratch next render and a bent/hand-drawn wire
+	// visibly snaps to a different bend column/row or loses its corners. This has
+	// nothing to do with AUTO_ARRANGE; it applies unconditionally.
+	const A = comp(w.from.cid, sch), B = comp(w.to.cid, sch);
+	const p1 = A && portPos(A, w.from.pid), p2 = B && portPos(B, w.to.pid);
+	const jp = portPos(j, "j");
+	const r = (p1 && p2 && jp) ? wireRoute(w, p1, p2, wireOpts(w, sch)) : null;
 	sch.wires.splice(idx, 1);
 	// the net name stays on the FIRST half only — one label per net, not one
 	// per segment (healJunctions' merge restores it via a.name||b.name)
-	sch.wires.push({
+	const first = {
 		id: uid("w"),
 		from: w.from,
 		to: { cid: j.id, pid: "j" },
 		name: w.name, width: w.width
-	});
-	sch.wires.push({
+	};
+	const second = {
 		id: uid("w"),
 		from: { cid: j.id, pid: "j" },
 		to: w.to,
 		name: "", width: w.width
-	});
+	};
+	if (r) {
+		if (r.kind === "z") {
+			if (Math.min(r.x1, jp.x) <= r.mx && r.mx <= Math.max(r.x1, jp.x)) first.mx = r.mx;
+			else if (Math.min(jp.x, r.x2) <= r.mx && r.mx <= Math.max(jp.x, r.x2)) second.mx = r.mx;
+		} else if (r.kind === "s") {
+			if (Math.min(r.y1, jp.y) <= r.my && r.my <= Math.max(r.y1, jp.y)) first.my = r.my;
+			else if (Math.min(jp.y, r.y2) <= r.my && r.my <= Math.max(jp.y, r.y2)) second.my = r.my;
+		} else if (r.kind === "poly") {
+			const field = (w.pts && w.pts.length) ? "pts" : "autoPts";
+			const split = splitPolyAtPoint(r, jp);
+			if (split) {
+				if (split.firstPts.length) first[field] = split.firstPts;
+				if (split.secondPts.length) second[field] = split.secondPts;
+			}
+		}
+	}
+	sch.wires.push(first);
+	sch.wires.push(second);
 }
 /* Every wire electrically in the SAME net as w0 — walk UNDIRECTED across JUNCTION
    endpoints (a net is bounded by real component pins; junctions are just branch
