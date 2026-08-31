@@ -371,12 +371,15 @@ function generateSchVhdl(sch) {
 			if (c.params.reset && !RST) warns.push(`${compDisplay(c)} เปิด async reset แต่ขา rst ไม่ได้ต่อสาย — ข้าม reset ในโค้ด`);
 			if (c.params.preset && !PRE) warns.push(`${compDisplay(c)} เปิด async preset แต่ขา pre ไม่ได้ต่อสาย — ข้าม preset ในโค้ด`);
 			const qsig = c._nets.q;
+			const qnsig = c._nets.qn;
 			processes.push({
 				clk: CLK, edge: c.params.edge,
 				rst: RST, pre: PRE,
-				body: `      if (${T}='1') then ${qsig} <= not ${qsig}; end if;`,
-				rstAssign: `      ${qsig} <= '0';`,
-				preAssign: `      ${qsig} <= '1';`,
+				// both q and qn toggle together on T=1 and hold together on T=0,
+				// so they stay complementary without needing an else branch
+				body: `      if (${T}='1') then ${qsig} <= not ${qsig}; ${qnsig} <= not ${qnsig}; end if;`,
+				rstAssign: `      ${qsig} <= '0';\n      ${qnsig} <= '1';`,
+				preAssign: `      ${qsig} <= '1';\n      ${qnsig} <= '0';`,
 			});
 			return;
 		}

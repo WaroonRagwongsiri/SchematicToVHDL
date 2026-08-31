@@ -434,7 +434,8 @@ const TYPES = {
 			];
 			if (p.reset) ports.push({ id: "rst", dir: "in", dx: 22, dy: 77, label: "" });
 			if (p.preset) ports.push({ id: "pre", dir: "in", dx: 55, dy: 0, label: "" });
-			ports.push({ id: "q", dir: "out", dx: 88, dy: 33, label: "" });
+			ports.push({ id: "q", dir: "out", dx: 88, dy: 22, label: "" });
+			ports.push({ id: "qn", dir: "out", dx: 88, dy: 55, label: "" });
 			return ports;
 		},
 		shape(p) {
@@ -442,7 +443,8 @@ const TYPES = {
 			return `<rect class="glow" x="6" y="6" width="76" height="65" rx="4" fill="var(--gate-fill)" stroke="var(--gate-stroke)" stroke-width="1.7"/>
               <text x="42" y="52" text-anchor="middle" font-size="11" font-weight="600" fill="var(--ink)">T-FF</text>
               <text x="14" y="26" font-size="10" fill="var(--ink-dim)">T</text>
-              <text x="74" y="37" text-anchor="end" font-size="10" fill="var(--ink-dim)">Q</text>
+              <text x="74" y="26" text-anchor="end" font-size="10" fill="var(--ink-dim)">Q</text>
+              <text x="74" y="59" text-anchor="end" font-size="10" fill="var(--ink-dim)">Q̅</text>
               <g transform="translate(6,0)">${tri}</g>
               ${p.reset ? `<text x="25" y="68" font-size="9" fill="var(--err)">R</text>` : ""}
               ${p.preset ? `<text x="47" y="16" font-size="8" fill="var(--ok)">P</text>` : ""}`;
