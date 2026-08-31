@@ -98,6 +98,46 @@ function blockShape(label, w, h, sub) {
 function ioLabel(p) { return (p.name || "") + ((p.width || 1) > 1 ? `(${p.width - 1}:0)` : ""); }
 // width rounded up to a GRID multiple so the port x lands on the grid
 function ioShapeW(p) { return Math.ceil(Math.max(56, Math.round(ioLabel(p).length * 6.3) + 28) / GRID) * GRID; }
+/* ISE ships exactly four sizes of each comparator, and the SIZE decides the pin
+   style: COMP2/COMP4 bring every bit out on its own pin, COMP8/COMP16 carry one bus
+   pin per side. So the style is derived, never a separate switch to get wrong. */
+function cmpIsBus(p) { return (p.width || 2) >= 8; }
+function cmpDef(mag) {
+	// 5 rows for the bus form, not 4: a bus pin's label is long ("A(15:0)") and at the
+	// top row it runs straight into the block title, which sits centred at y=22.
+	const rowsOf = p => (cmpIsBus(p) ? 5 : 2 * Math.max(1, p.width || 2));
+	const sizeOf = p => blockSize(110, 22 * (rowsOf(p) + 1));
+	return {
+		label: mag ? "COMPM" : "COMP", category: "cmp",
+		defaultParams: { width: 2 },
+		paramSchema: [
+			{ key: "width", label: "ขนาด (bit)", type: "select", options: [2, 4, 8, 16] },
+		],
+		size: sizeOf,
+		ports(p) {
+			const n = Math.max(1, p.width || 2), h = sizeOf(p).h, w = 110, out = [];
+			if (cmpIsBus(p)) {
+				out.push({ id: "a", dir: "in", dx: 0, dy: 44, label: `A(${n - 1}:0)`, width: n });
+				out.push({ id: "b", dir: "in", dx: 0, dy: h - 44, label: `B(${n - 1}:0)`, width: n });
+			} else {
+				for (let i = 0; i < n; i++) out.push({ id: "a" + i, dir: "in", dx: 0, dy: 22 * (i + 1), label: "A" + i });
+				for (let i = 0; i < n; i++) out.push({ id: "b" + i, dir: "in", dx: 0, dy: 22 * (n + i + 1), label: "B" + i });
+			}
+			if (mag) {
+				out.push({ id: "gt", dir: "out", dx: w, dy: 44, label: "GT" });
+				out.push({ id: "lt", dir: "out", dx: w, dy: h - 44, label: "LT" });
+			} else {
+				out.push({ id: "eq", dir: "out", dx: w, dy: h / 2, label: "EQ" });
+			}
+			return out;
+		},
+		shape(p) {
+			const n = Math.max(1, p.width || 2), h = sizeOf(p).h;
+			// ISE names the part after its width: COMP2, COMPM8 …
+			return blockShape((mag ? "COMPM" : "COMP") + n, 110, h, "");
+		}
+	};
+}
 /* clock-edge mark for flip-flops: triangle, plus a bubble for falling edge */
 function edgeMark(cy, edge) {
 	const off = edge === "falling" ? 7 : 0;
@@ -476,7 +516,15 @@ const TYPES = {
               <text x="74" y="59" text-anchor="end" font-size="10" fill="var(--ink-dim)">Q̅</text>
               <g transform="translate(6,0)">${tri}</g>`;
 		}
-	}
+	},
+
+	/* ---------- COMPARATORS (ISE COMP / COMPM family) ----------
+	   COMP = equality only (EQ). COMPM = magnitude, GT and LT (equal is "neither",
+	   exactly as in ISE). One definition covers COMP2 / COMPM2 / COMPM8 / COMPMC8 from
+	   the ISE library: width picks the pin style — 2/4 bit gets individual A0/A1... pins
+	   like COMP2, or one A(n-1:0) / B(n-1:0) bus pin like COMPM8. */
+	COMP: cmpDef(false),
+	COMPM: cmpDef(true),
 };
 
 /* ---------- helpers for type system ---------- */

@@ -399,6 +399,56 @@ function generateSchVhdl(sch) {
 			});
 			return;
 		}
+		/* ----- COMPARATORS -----
+		   The operands are QUALIFIED (`unsigned'(a1 & a0)`) rather than plain conversions:
+		   a bare concatenation has no type of its own, and an unqualified `(others => '0')`
+		   on one side of a comparison is the exact shape that made Vivado report an
+		   ambiguous "=" before. One-bit comparisons skip the array form altogether and go
+		   through eq(), which folds a constant driver instead of writing '0' = '1'. */
+		if (c.type === "COMP" || c.type === "COMPM") {
+			const isLit = v => typeof v === "string" && (/^'[01]'$/.test(v) || /^\(others\s*=>\s*'[01]'\)$/.test(v));
+			const eq = (v, bit) => {
+				if (!isLit(v)) return `${v} = '${bit}'`;
+				const one = /'1'/.test(v);
+				return (one === (String(bit) === "1")) ? "true" : "false";
+			};
+			const mag = c.type === "COMPM";
+			const n = Math.max(1, c.params.width || 2);
+			const outs = mag ? ["gt", "lt"] : ["eq"];
+			const tie = () => outs.forEach(pid => concurrent.push(`  ${c._nets[pid]} <= '0';`));
+			let A, B, arr;
+			if (cmpIsBus(c.params)) {
+				const av = driver(c.id, "a"), bv = driver(c.id, "b");
+				if (!av || !bv || isLit(av) || isLit(bv)) {
+					warns.push(`${compDisplay(c)} ยังต่อขา A/B ไม่ครบ — ผลลัพธ์ถูกตรึงเป็น '0'`);
+					tie(); return;
+				}
+				A = av; B = bv; arr = true;
+			} else if (n === 1) {
+				A = driverFor("a0"); B = driverFor("b0"); arr = false;
+			} else {
+				const side = pre => { const bits = []; for (let i = n - 1; i >= 0; i--) bits.push(driverFor(pre + i)); return bits.join(" & "); };
+				A = side("a"); B = side("b"); arr = true;
+			}
+			// numeric_std defines < and > for unsigned, NOT for std_logic_vector — a bare
+			// `aa > bb` does not compile in Vivado. A bus operand is CONVERTED; a raw
+			// concatenation is QUALIFIED, since it has no type of its own to convert from.
+			const q = v => cmpIsBus(c.params) ? `unsigned(${v})` : `unsigned'(${v})`;
+			const sv = v => cmpIsBus(c.params) ? v : `std_logic_vector'(${v})`;
+			if (!mag) {
+				const cond = arr ? `${sv(A)} = ${sv(B)}`
+					: (isLit(A) && isLit(B) ? (A === B ? "true" : "false") : `${A} = ${B}`);
+				concurrent.push(`  ${c._nets.eq} <= '1' when ${cond} else '0';`);
+			} else if (arr) {
+				concurrent.push(`  ${c._nets.gt} <= '1' when ${q(A)} > ${q(B)} else '0';`);
+				concurrent.push(`  ${c._nets.lt} <= '1' when ${q(A)} < ${q(B)} else '0';`);
+			} else {
+				// 1 bit: A>B is A=1 and B=0
+				concurrent.push(`  ${c._nets.gt} <= '1' when ${eq(A, 1)} and ${eq(B, 0)} else '0';`);
+				concurrent.push(`  ${c._nets.lt} <= '1' when ${eq(A, 0)} and ${eq(B, 1)} else '0';`);
+			}
+			return;
+		}
 		/* ----- Custom component (component instantiation) ----- */
 		if (c.type.startsWith("CUSTOM:")) {
 			const td = typeDef(c);
@@ -413,7 +463,7 @@ function generateSchVhdl(sch) {
 					maps.push(`${p.name} => ${c._nets[p.name]}`);
 				}
 			});
-			subInstances.push({ entity: sanId(cc.name), inst: c.id, maps });
+			subInstances.push({ entity: sanId(cc.name), inst: c.id, label: c.label || "", maps });
 			return;
 		}
 		/* ----- Sub-schematic instance ----- */
@@ -430,7 +480,7 @@ function generateSchVhdl(sch) {
 					maps.push(`${p.id} => ${c._nets[p.id]}`);
 				}
 			});
-			subInstances.push({ entity: sanId(subSch.name), inst: c.id, maps });
+			subInstances.push({ entity: sanId(subSch.name), inst: c.id, label: c.label || "", maps });
 			return;
 		}
 	});
@@ -547,9 +597,10 @@ function generateSchVhdl(sch) {
 	if (subInstances.length) {
 		code += `\n  -- sub-component instantiations\n`;
 		subInstances.forEach((si, idx) => {
+			const inst = si.label ? `u_${sanId(si.label)}` : `u_${idx}_${si.inst}`;
 			// a port-less instance takes no port map clause — "port map ( )" is invalid
-			if (!si.maps.length) { code += `  u_${idx}_${si.inst} : ${si.entity};\n`; return; }
-			code += `  u_${idx}_${si.inst} : ${si.entity} port map (\n    ` +
+			if (!si.maps.length) { code += `  ${inst} : ${si.entity};\n`; return; }
+			code += `  ${inst} : ${si.entity} port map (\n    ` +
 				si.maps.join(",\n    ") + `\n  );\n`;
 		});
 	}

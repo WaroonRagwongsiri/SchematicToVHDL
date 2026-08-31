@@ -4,10 +4,23 @@
    SYNTHESIS CHECK
    ========================================================================= */
 /* human-readable component reference for error messages */
+/* keep block labels unique in a sheet. The label is FREE TEXT (Thai included) — it is
+   what the student sees on the canvas, so it is stored raw and never sanitised here;
+   sanId() is applied only where VHDL needs an identifier. */
+function uniqueLabel(sch, want, exclude) {
+	const raw = String(want || "").trim();
+	if (!raw) return "";
+	const used = new Set((sch.components || []).filter(x => x !== exclude && x.label).map(x => x.label.toLowerCase()));
+	let cand = raw, k = 2;
+	while (used.has(cand.toLowerCase())) cand = raw + "_" + (k++);
+	return cand;
+}
 function compDisplay(c) {
 	if (c.type === "IN") return `INPUT '${c.params.name}'`;
 	if (c.type === "OUT") return `OUTPUT '${c.params.name}'`;
 	const td = typeDef(c);
+	// a labelled block is named in messages — far easier to find than coordinates
+	if (c.label) return `${td ? td.label : c.type} '${c.label}'`;
 	return `${td ? td.label : c.type} (${c.x}, ${c.y})`;
 }
 /* open the schematic, select the component and centre the view on it */

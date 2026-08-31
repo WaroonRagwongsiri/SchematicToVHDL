@@ -101,6 +101,13 @@ function renderInspector() {
 			let html = `<div class="insp"><h3>${esc(td ? td.label : c.type)} <span style="font-size:11px;color:var(--muted);font-weight:normal">${esc(c.id)}</span></h3>`;
 			html += `<div class="row"><label>Position</label>
         <span><input style="width:62px" id="iX" value="${c.x}"> <input style="width:62px" id="iY" value="${c.y}"></span></div>`;
+			// a free-text name for THIS block: shown on the canvas, used as the signal /
+			// instance name in the generated VHDL, and quoted in F7 messages so an error
+			// points at a block the student can actually find ("AND 'carry'" not "AND (240,40)")
+			if (c.type !== "JUNCTION") {
+				html += `<div class="row"><label>ชื่อ (label)</label>
+          <input id="iLabel" value="${esc(c.label || "")}" placeholder="เช่น carry, sum_gate"></div>`;
+			}
 			schema.forEach(f => {
 				const v = (c.params || {})[f.key];
 				if (f.type === "string") {
@@ -123,6 +130,15 @@ function renderInspector() {
 			root.innerHTML = html;
 			$("#iX").addEventListener("change", ev => { c.x = snap(+ev.target.value || 0); snapshot(); render(); renderInspector(); });
 			$("#iY").addEventListener("change", ev => { c.y = snap(+ev.target.value || 0); snapshot(); render(); renderInspector(); });
+			if ($("#iLabel")) $("#iLabel").addEventListener("change", ev => {
+				// stored as typed (Thai is fine — this is what shows on the canvas); the VHDL
+				// side sanitises it. Only uniqueness is enforced, so two blocks never share a name.
+				const raw = ev.target.value.trim();
+				const v = uniqueLabel(sch, raw, c);
+				if (raw && v !== raw) toast(`ชื่อ '${raw}' ถูกใช้แล้ว → เปลี่ยนเป็น '${v}'`, "warn");
+				c.label = v;
+				snapshot(); render(); renderInspector();
+			});
 			if ($("#iRotate")) $("#iRotate").addEventListener("click", () => rotateSelection(1));
 			if ($("#iMirror")) $("#iMirror").addEventListener("click", () => mirrorSelection());
 			root.querySelectorAll("[data-pk]").forEach(e => {

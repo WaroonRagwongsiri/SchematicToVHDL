@@ -195,6 +195,7 @@ function renderPalette() {
 		["gate", "LOGIC GATES"],
 		["mux", "MUX / DEMUX"],
 		["code", "ENCODER / DECODER"],
+		["cmp", "COMPARATOR"],
 		["ff", "FLIP-FLOPS"],
 		["bus", "BUS TAP"],
 	];

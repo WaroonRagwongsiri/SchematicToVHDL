@@ -384,6 +384,19 @@ function render() {
 		}
 
 		root.appendChild(g);
+
+		if (c.label && c.type !== "JUNCTION") {
+			const sz = getSize(c);
+			const lx = c.x + sz.w / 2, ly = c.y - 5;
+			const bw = c.label.length * 6.2 + 8;
+			root.appendChild(el("rect", {
+				x: lx - bw / 2, y: ly - 10, width: bw, height: 13, rx: 3,
+				fill: "var(--label-bg)", "pointer-events": "none"
+			}));
+			const t = txt(lx, ly, c.label, { anchor: "middle", size: 10, fill: "var(--ink)" });
+			t.setAttribute("pointer-events", "none");
+			root.appendChild(t);
+		}
 	});
 
 	updateStatus();
