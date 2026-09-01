@@ -125,6 +125,8 @@ function renderInspector() {
 			if (orientable(c)) html += `<div class="row"><label>ทิศทาง</label><span style="display:flex;gap:4px">
         <button class="btn" id="iRotate" title="หมุน 90° (R · Shift+R = ทวนเข็ม)">↻ หมุน</button>
         <button class="btn" id="iMirror" title="พลิกซ้าย-ขวา (M)">⇋ พลิก</button></span></div>`;
+			if (c.type === "TEMPBLOCK") html += `<div class="row"><label>Ports</label>
+        <button class="btn" id="iTempPorts">✎ Edit Inputs / Outputs…</button></div>`;
 			html += `<div class="row"><label></label><button class="btn" data-act="delete-sel">🗑 Delete</button></div>`;
 			html += `</div>`;
 			root.innerHTML = html;
@@ -141,6 +143,7 @@ function renderInspector() {
 			});
 			if ($("#iRotate")) $("#iRotate").addEventListener("click", () => rotateSelection(1));
 			if ($("#iMirror")) $("#iMirror").addEventListener("click", () => mirrorSelection());
+			if ($("#iTempPorts")) $("#iTempPorts").addEventListener("click", () => openTempBlockPortsEditor(c));
 			root.querySelectorAll("[data-pk]").forEach(e => {
 				e.addEventListener("change", ev => {
 					const k = e.dataset.pk;

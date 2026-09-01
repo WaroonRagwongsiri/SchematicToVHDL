@@ -198,6 +198,7 @@ function renderPalette() {
 		["cmp", "COMPARATOR"],
 		["ff", "FLIP-FLOPS"],
 		["bus", "BUS TAP"],
+		["misc", "TEMP BLOCK"],
 	];
 	const html = [`<div class="palette">`];
 	for (const [cat, name] of groups) {

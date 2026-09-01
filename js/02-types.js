@@ -518,6 +518,44 @@ const TYPES = {
 		}
 	},
 
+	/* ---------- TEMP BLOCK (undesigned placeholder) ----------
+	   A scaffold for logic the student hasn't designed yet: a box with a
+	   user-defined set of named, width-selectable in/out pins plus an optional
+	   clk pin. VHDL gen emits only a component declaration + port map stub —
+	   the student writes the matching entity by hand outside the tool. */
+	TEMPBLOCK: {
+		label: "TEMP BLOCK", category: "misc",
+		defaultParams: {
+			entity: "temp_block", clocked: false, _portSeq: 3,
+			ins: [{ id: "p1", name: "in0", width: 1 }],
+			outs: [{ id: "p2", name: "out0", width: 1 }],
+		},
+		paramSchema: [
+			{ key: "entity", label: "Entity name", type: "string" },
+			{ key: "clocked", label: "Has clock (clk)", type: "bool" },
+		],
+		size(p) {
+			const leftRows = (p.ins || []).length + (p.clocked ? 1 : 0);
+			const n = Math.max(leftRows, (p.outs || []).length, 2);
+			return { w: 121, h: 22 * (n + 1) };
+		},
+		ports(p) {
+			const { w } = this.size(p);
+			const out = [];
+			(p.ins || []).forEach((pin, i) => out.push({ id: pin.id, dir: "in", dx: 0, dy: 22 * (i + 1), label: pin.name, width: pin.width || 1 }));
+			if (p.clocked) out.push({ id: "clk", dir: "in", dx: 0, dy: 22 * ((p.ins || []).length + 1), label: "clk", width: 1 });
+			(p.outs || []).forEach((pin, i) => out.push({ id: pin.id, dir: "out", dx: w, dy: 22 * (i + 1), label: pin.name, width: pin.width || 1 }));
+			return out;
+		},
+		shape(p) {
+			const { w, h } = this.size(p);
+			return `<rect class="glow" x="6" y="6" width="${w - 12}" height="${h - 12}" rx="4"
+              fill="#3a2a1f" stroke="#ffb35d" stroke-width="1.7" stroke-dasharray="5 3"/>
+              <text x="${w / 2}" y="${h / 2}" text-anchor="middle" font-size="11" font-weight="700" fill="#ffdcae">${esc(p.entity || "temp_block")}</text>
+              <text x="${w / 2}" y="${h / 2 + 14}" text-anchor="middle" font-size="9" fill="var(--ink-dim)">(temp block)</text>`;
+		}
+	},
+
 	/* ---------- COMPARATORS (ISE COMP / COMPM family) ----------
 	   COMP = equality only (EQ). COMPM = magnitude, GT and LT (equal is "neither",
 	   exactly as in ISE). One definition covers COMP2 / COMPM2 / COMPM8 / COMPMC8 from

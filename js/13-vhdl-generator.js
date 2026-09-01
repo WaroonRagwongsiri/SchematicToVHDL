@@ -449,6 +449,22 @@ function generateSchVhdl(sch) {
 			}
 			return;
 		}
+		/* ----- Temporary Block (stub instantiation — user supplies the entity body) ----- */
+		if (c.type === "TEMPBLOCK") {
+			const maps = [];
+			portsArr.forEach(p => {
+				if (p.dir === "in") {
+					const v = driver(c.id, p.id);
+					if (!v) warns.push(`${compDisplay(c)} ขา '${p.label}' ยังไม่ได้ต่อสาย — ใช้ค่า '0' แทน`);
+					maps.push(`${p.label} => ${v || zlit(p.width)}`);
+				} else {
+					maps.push(`${p.label} => ${c._nets[p.id]}`);
+				}
+			});
+			const entity = sanId(c.params.entity || "temp_block");
+			subInstances.push({ entity, inst: c.id, label: c.label || "", maps, _tempPorts: portsArr.map(p => ({ name: p.label, dir: p.dir, width: p.width })) });
+			return;
+		}
 		/* ----- Custom component (component instantiation) ----- */
 		if (c.type.startsWith("CUSTOM:")) {
 			const td = typeDef(c);
@@ -538,6 +554,7 @@ function generateSchVhdl(sch) {
 	subInstances.forEach(si => {
 		if (seen.has(si.entity)) return;
 		seen.add(si.entity);
+		if (si._tempPorts) { compDecls.push(formatComponentDecl(si.entity, si._tempPorts)); return; }
 		// find the source: custom or sub-sch
 		const cc = Object.values(state.project.customs).find(x => sanId(x.name) === si.entity);
 		if (cc) {
