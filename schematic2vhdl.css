@@ -195,6 +195,13 @@ textarea:focus {
 	margin: 4px 2px
 }
 
+.ctx-menu {
+	position: fixed;
+	min-width: 180px;
+	display: block;
+	z-index: 1000
+}
+
 .grow {
 	flex: 1
 }

@@ -258,6 +258,59 @@ function closeSchTab(id) {
 	}
 	renderAll();
 }
+function closeAllTabs() {
+	state.openTabs = [];
+	state.activeId = Object.keys(state.project.schematics)[0] || null;
+	if (state.activeId) state.openTabs.push(state.activeId);
+	state.selection.clear();
+	state.pendingWire = null;
+	renderAll();
+}
+function showTabContextMenu(ev, id) {
+	ev.preventDefault();
+	const existing = document.querySelector(".ctx-menu");
+	if (existing) existing.remove();
+
+	const menu = document.createElement("div");
+	menu.className = "dd ctx-menu";
+	menu.style.left = ev.clientX + "px";
+	menu.style.top = ev.clientY + "px";
+	menu.innerHTML = `
+    <button data-ctx="close">✕ Close Tab</button>
+    <hr>
+    <button data-ctx="close-all">⛔ Close All Tabs</button>
+  `;
+	document.body.appendChild(menu);
+
+	function closeMenu() {
+		menu.remove();
+		document.removeEventListener("click", closeMenu);
+		document.removeEventListener("contextmenu", onOtherContextMenu);
+		document.removeEventListener("keydown", onKeyDown);
+	}
+	function onOtherContextMenu(e2) {
+		if (e2 === ev) return;
+		closeMenu();
+	}
+	function onKeyDown(e2) {
+		if (e2.key === "Escape") closeMenu();
+	}
+
+	menu.querySelector('[data-ctx="close"]').addEventListener("click", () => {
+		closeMenu();
+		closeSchTab(id);
+	});
+	menu.querySelector('[data-ctx="close-all"]').addEventListener("click", () => {
+		closeMenu();
+		closeAllTabs();
+	});
+
+	setTimeout(() => {
+		document.addEventListener("click", closeMenu);
+		document.addEventListener("contextmenu", onOtherContextMenu);
+		document.addEventListener("keydown", onKeyDown);
+	}, 0);
+}
 function renderSchTabs() {
 	const root = $("#schTabs");
 	const html = [];
@@ -280,4 +333,5 @@ function renderSchTabs() {
 		ev.stopPropagation();
 		closeSchTab(e.dataset.close);
 	}));
+	root.querySelectorAll("[data-tab]").forEach(e => e.addEventListener("contextmenu", ev => showTabContextMenu(ev, e.dataset.tab)));
 }
