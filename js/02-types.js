@@ -526,18 +526,22 @@ const TYPES = {
 	TEMPBLOCK: {
 		label: "TEMP BLOCK", category: "misc",
 		defaultParams: {
-			entity: "temp_block", clocked: false, _portSeq: 3,
+			entity: "temp_block", clocked: false, _portSeq: 3, width: 0,
 			ins: [{ id: "p1", name: "in0", width: 1 }],
 			outs: [{ id: "p2", name: "out0", width: 1 }],
 		},
 		paramSchema: [
 			{ key: "entity", label: "Entity name", type: "string" },
 			{ key: "clocked", label: "Has clock (clk)", type: "bool" },
+			{ key: "width", label: "Width (0 = auto)", type: "int", min: 0, max: 600 },
 		],
 		size(p) {
 			const leftRows = (p.ins || []).length + (p.clocked ? 1 : 0);
 			const n = Math.max(leftRows, (p.outs || []).length, 2);
-			return { w: 121, h: 22 * (n + 1) };
+			const title = p.entity || "temp_block";
+			const autoW = Math.max(121, title.length * 6.8 + 28);
+			const w = p.width > 0 ? Math.max(p.width, 40) : autoW;
+			return { w, h: 22 * (n + 1) };
 		},
 		ports(p) {
 			const { w } = this.size(p);
