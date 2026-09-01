@@ -163,36 +163,94 @@ function tappedBitsOnNet(w, sch) {
 	});
 	return used;
 }
+/* A free wire end (an "endpoint" junction carrying exactly one wire) near `pt` —
+   this is the end of the thin wire the user drew BEFORE reaching for the tap. */
+function freeEndNear(sch, pt, tol) {
+	let best = null;
+	sch.components.forEach(c => {
+		if (c.type !== "JUNCTION" || !(c.params && c.params.endpoint)) return;
+		if (sch.wires.filter(w => w.from.cid === c.id || w.to.cid === c.id).length !== 1) return;
+		const p = portPos(c, "j");
+		const d = Math.hypot(p.x - pt.x, p.y - pt.y);
+		if (d <= tol && (!best || d < best.d)) best = { c, p, d };
+	});
+	return best;
+}
 /* Add Bus Tap: click a bus wire → drop a tap flush on it (junction + triangle),
    inheriting the bus width. ISE-style auto-increment: each new tap takes the
    lowest bit not tapped yet on this net; when all bits are taken it wraps to 0
-   (tapping the same bit twice is legal fan-out). */
+   (tapping the same bit twice is legal fan-out).
+   THE GESTURE: draw a thin wire and leave its end in open space, then drop a Bus
+   Tap on the bus where the two meet — the tap seats flush on the bus, takes the
+   next free bit, and swallows the waiting free end so the two nets become one. */
 function stampTapOnWire(w, point) {
 	const sch = activeSch();
+	// an earlier tap may have split this very wire in two — the object handed in is
+	// then dead, and splitting it again would leave the tap dangling off the bus
+	if (!sch.wires.includes(w)) {
+		const at0 = nearestOnWire(w, point, 0, sch);
+		w = at0 ? (sch.wires.find(x => { const a = nearestOnWire(x, at0, 0, sch); return a && a.d < 1; }) || null) : null;
+		if (!w) { toast("คลิกบนสายบัสอีกครั้ง", "warn", 2400); return false; }
+	}
 	const sw = netWidth(w, sch);
 	if (sw <= 1) { toast("Bus Tap ใช้กับสายบัส (กว้าง > 1 bit) เท่านั้น", "warn"); return false; }
 	const at = nearestOnWire(w, point, 0, sch);
 	if (!at) return false;
+	let free = freeEndNear(sch, at, 10 * GRID);
+	// never swallow the BUS'S OWN open end: a free end only counts when it belongs
+	// to a DIFFERENT net than the wire being tapped (else self-loop + width error)
+	if (free) {
+		const fw0 = sch.wires.find(x => x.from.cid === free.c.id || x.to.cid === free.c.id);
+		if (fw0 && netWires(sch, w).has(fw0.id)) free = null;
+	}
+	// the thin wire decides the direction: if something already drives it, this tap
+	// is writing that signal INTO the bus; otherwise it is reading a bit out
+	let mode = "split";
+	if (free) {
+		const fw = sch.wires.find(x => x.from.cid === free.c.id || x.to.cid === free.c.id);
+		const other = fw && comp(fw.from.cid === free.c.id ? fw.to.cid : fw.from.cid, sch);
+		const op = other && getPort(other, fw.from.cid === free.c.id ? fw.to.pid : fw.from.pid);
+		if (op && op.dir === "out") mode = "merge";
+	}
+	// point the rip at the waiting wire end (or fall back to orientation-based)
+	let dir;
+	if (free) {
+		const dx = free.p.x - at.x, dy = free.p.y - at.y;
+		dir = Math.abs(dx) >= Math.abs(dy) ? (dx >= 0 ? "right" : "left") : (dy >= 0 ? "down" : "up");
+	} else dir = at.seg === "v" ? "right" : "down";
 	const used = tappedBitsOnNet(w, sch);
 	let bit = 0; while (bit < sw && used.has(bit)) bit++;
 	const full = bit >= sw;
 	if (full) bit = 0;
-	const j = { id: uid("c"), type: "JUNCTION", x: at.x - 6, y: at.y - 6, params: {} };
-	sch.components.push(j);
-	splitWireThroughJunction(w, j, sch);
-	const tap = {
-		id: uid("c"), type: "BUSTAP", x: 0, y: 0, label: "",
-		params: { bit, mode: "split", dir: at.seg === "v" ? "right" : "down" }
-	};
+	const tap = { id: uid("c"), type: "BUSTAP", x: 0, y: 0, label: "", params: { bit, dir, mode } };
 	const dp0 = TYPES.BUSTAP.ports(tap.params).find(p => p.id === "d");
 	tap.x = at.x - dp0.dx;   // seat so the d pin lands EXACTLY on the bus point (any tap size)
 	tap.y = at.y - dp0.dy;
 	sch.components.push(tap);
+	const j = { id: uid("c"), type: "JUNCTION", x: at.x - 6, y: at.y - 6, params: { fixed: true } };
+	sch.components.push(j);
+	splitWireThroughJunction(w, j, sch);
 	sch.wires.push({ id: uid("w"), from: { cid: j.id, pid: "j" }, to: { cid: tap.id, pid: "d" }, name: "" });
+	if (free) {
+		// re-point the thin wire off its free end and onto the tap's bit pin
+		const fw = sch.wires.find(x => x.from.cid === free.c.id || x.to.cid === free.c.id);
+		if (fw) {
+			if (mode === "merge") {
+				if (fw.to.cid === free.c.id) fw.to = { cid: tap.id, pid: "y" };
+				else { fw.to = fw.from; fw.from = { cid: tap.id, pid: "y" }; }   // keep source→sink
+			} else {
+				if (fw.from.cid === free.c.id) fw.from = { cid: tap.id, pid: "y" };
+				else { fw.from = { cid: tap.id, pid: "y" }; }
+			}
+			sch.components = sch.components.filter(c => c !== free.c);
+		}
+	}
+	healJunctions(sch);
+	healLayout(sch);
 	state.selection = new Set([tap.id]);
 	snapshot(); render(); renderInspector();
 	if (full) toast(`ครบทุกบิตแล้ว — วางซ้ำที่บิต [0] (ปรับบิตได้ใน Inspector)`, "info", 3200);
-	else toast(`วาง Bus Tap บิต [${bit}] แล้ว — คลิกต่อ = บิตถัดไป · ปรับบิต/โหมดใน Inspector`, "ok", 2800);
+	else toast(free ? `แตะบิต [${bit}] ของบัส แล้วต่อเข้ากับสายที่ลากไว้` : `วาง Bus Tap บิต [${bit}] แล้ว — คลิกต่อ = บิตถัดไป · ปรับบิต/โหมดใน Inspector`, "ok", 2800);
 	return true;
 }
 

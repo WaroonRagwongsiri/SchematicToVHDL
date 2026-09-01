@@ -153,7 +153,7 @@ const TYPES = {
 		defaultParams: { name: "in", width: 1 },
 		paramSchema: [
 			{ key: "name", label: "Pin name", type: "string" },
-			// BUS DISABLED (commented out — locks IN/OUT to 1 bit): {key:"width", label:"Bus width", type:"int", min:1, max:64},
+			{ key: "width", label: "Bus width", type: "int", min: 1, max: 32 },
 		],
 		size: p => ({ w: ioShapeW(p), h: 44 }),
 		ports: p => { const w = ioShapeW(p); return [{ id: "o", dir: "out", dx: w, dy: 22, width: p.width }]; },
@@ -169,7 +169,7 @@ const TYPES = {
 		defaultParams: { name: "out", width: 1 },
 		paramSchema: [
 			{ key: "name", label: "Pin name", type: "string" },
-			// BUS DISABLED (commented out — locks IN/OUT to 1 bit): {key:"width", label:"Bus width", type:"int", min:1, max:64},
+			{ key: "width", label: "Bus width", type: "int", min: 1, max: 32 },
 		],
 		size: p => ({ w: ioShapeW(p), h: 44 }),
 		ports: p => { const w = ioShapeW(p); return [{ id: "i", dir: "in", dx: 0, dy: 22, width: p.width }]; },
