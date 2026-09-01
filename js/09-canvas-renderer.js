@@ -131,6 +131,7 @@ function render() {
 		hit.addEventListener("dblclick", ev => {
 			// rename only when not mid-gesture (drawing/branching)
 			if (state.pendingWire) return;
+			if (netWidth(w) > 1) { stampTapOnWire(w, svgPoint(ev)); return; }
 			applyWireName(w, prompt("ตั้งชื่อสาย (บัสต้องลากจากพอร์ต >1 bit ของ component):", w.name || ""));
 		});
 		// right-click a wire = tap it (only if it is already a bus); a plain wire is
