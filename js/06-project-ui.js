@@ -242,11 +242,13 @@ function renderPalette() {
    ========================================================================= */
 function openSchTab(id) {
 	if (!state.project.schematics[id]) return;
+	const switched = state.activeId !== id;
 	state.activeId = id;
 	if (!state.openTabs.includes(id)) state.openTabs.push(id);
 	state.selection.clear();
 	state.pendingWire = null;
 	renderAll();
+	if (switched) { try { zoomFit(); } catch (_) { } }
 }
 function closeSchTab(id) {
 	state.openTabs = state.openTabs.filter(t => t !== id);

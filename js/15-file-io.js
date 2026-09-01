@@ -101,6 +101,7 @@ function deserialize(json) {
 	resetVhdlPanel();                // stale generated code belongs to the old project
 	$("#projectName").value = proj.name || "my_project";
 	snapshot(); renderAll();
+	try { zoomFit(); } catch (_) { }
 }
 function saveProjectToFile() {
 	state.project.name = sanId($("#projectName").value || state.project.name || "project");
