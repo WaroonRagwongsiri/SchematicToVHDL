@@ -230,7 +230,7 @@ function runSynthesis() {
 				});
 				else if (bit > fw - 1) issues.push({
 					lvl: "err",
-					msg: `Bus Tap แตะบิต ${bit} แต่บัสมีช่วงแค่ (${fw - 1}:0)`, ref: sch.name, schId: sch.id, cid: tc.id
+					msg: `Bus Tap แตะบิต ${bit} แต่บัสมีช่วงแค่ [${fw - 1}:0]`, ref: sch.name, schId: sch.id, cid: tc.id
 				});
 				return;
 			}

@@ -95,7 +95,8 @@ function blockShape(label, w, h, sub) {
           ${sub ? `<text x="${w / 2}" y="34" text-anchor="middle" font-size="9.5" fill="var(--ink-dim)">${sub}</text>` : ""}`;
 }
 /* IN/OUT flag geometry: width follows the label so long names never overflow */
-function ioLabel(p) { return (p.name || "") + ((p.width || 1) > 1 ? `(${p.width - 1}:0)` : ""); }
+function ioLabel(p) { return (p.name || "") + ((p.width || 1) > 1 ? `[${p.width - 1}:0]` : ""); }
+function portLabel(name, width) { return (name || "") + ((width || 1) > 1 ? `[${width - 1}:0]` : ""); }
 // width rounded up to a GRID multiple so the port x lands on the grid
 function ioShapeW(p) { return Math.ceil(Math.max(56, Math.round(ioLabel(p).length * 6.3) + 28) / GRID) * GRID; }
 /* ISE ships exactly four sizes of each comparator, and the SIZE decides the pin
@@ -117,8 +118,8 @@ function cmpDef(mag) {
 		ports(p) {
 			const n = Math.max(1, p.width || 2), h = sizeOf(p).h, w = 110, out = [];
 			if (cmpIsBus(p)) {
-				out.push({ id: "a", dir: "in", dx: 0, dy: 44, label: `A(${n - 1}:0)`, width: n });
-				out.push({ id: "b", dir: "in", dx: 0, dy: h - 44, label: `B(${n - 1}:0)`, width: n });
+				out.push({ id: "a", dir: "in", dx: 0, dy: 44, label: `A[${n - 1}:0]`, width: n });
+				out.push({ id: "b", dir: "in", dx: 0, dy: h - 44, label: `B[${n - 1}:0]`, width: n });
 			} else {
 				for (let i = 0; i < n; i++) out.push({ id: "a" + i, dir: "in", dx: 0, dy: 22 * (i + 1), label: "A" + i });
 				for (let i = 0; i < n; i++) out.push({ id: "b" + i, dir: "in", dx: 0, dy: 22 * (n + i + 1), label: "B" + i });
@@ -526,17 +527,16 @@ const TYPES = {
 	TEMPBLOCK: {
 		label: "TEMP BLOCK", category: "misc",
 		defaultParams: {
-			entity: "temp_block", clocked: false, _portSeq: 3, width: 0,
+			entity: "temp_block", _portSeq: 3, width: 0,
 			ins: [{ id: "p1", name: "in0", width: 1 }],
 			outs: [{ id: "p2", name: "out0", width: 1 }],
 		},
 		paramSchema: [
 			{ key: "entity", label: "Entity name", type: "string" },
-			{ key: "clocked", label: "Has clock (clk)", type: "bool" },
 			{ key: "width", label: "Width (0 = auto)", type: "int", min: 0, max: 600 },
 		],
 		size(p) {
-			const leftRows = (p.ins || []).length + (p.clocked ? 1 : 0);
+			const leftRows = (p.ins || []).length;
 			const n = Math.max(leftRows, (p.outs || []).length, 2);
 			const title = p.entity || "temp_block";
 			const autoW = Math.max(121, title.length * 6.8 + 28);
@@ -546,9 +546,8 @@ const TYPES = {
 		ports(p) {
 			const { w } = this.size(p);
 			const out = [];
-			(p.ins || []).forEach((pin, i) => out.push({ id: pin.id, dir: "in", dx: 0, dy: 22 * (i + 1), label: pin.name, width: pin.width || 1 }));
-			if (p.clocked) out.push({ id: "clk", dir: "in", dx: 0, dy: 22 * ((p.ins || []).length + 1), label: "clk", width: 1 });
-			(p.outs || []).forEach((pin, i) => out.push({ id: pin.id, dir: "out", dx: w, dy: 22 * (i + 1), label: pin.name, width: pin.width || 1 }));
+			(p.ins || []).forEach((pin, i) => out.push({ id: pin.id, dir: "in", dx: 0, dy: 22 * (i + 1), label: portLabel(pin.name, pin.width), width: pin.width || 1 }));
+			(p.outs || []).forEach((pin, i) => out.push({ id: pin.id, dir: "out", dx: w, dy: 22 * (i + 1), label: portLabel(pin.name, pin.width), width: pin.width || 1 }));
 			return out;
 		},
 		shape(p) {
@@ -621,8 +620,8 @@ function customTypeDef(cc) {
 		size: _ => ({ w, h }),
 		ports() {
 			const out = [];
-			ins.forEach((p, i) => out.push({ id: p.name, dir: "in", dx: 0, dy: 14 + 22 * i, label: p.name, width: p.width || 1 }));
-			outs.forEach((p, i) => out.push({ id: p.name, dir: "out", dx: w, dy: 14 + 22 * i, label: p.name, width: p.width || 1 }));
+			ins.forEach((p, i) => out.push({ id: p.name, dir: "in", dx: 0, dy: 14 + 22 * i, label: portLabel(p.name, p.width), width: p.width || 1 }));
+			outs.forEach((p, i) => out.push({ id: p.name, dir: "out", dx: w, dy: 14 + 22 * i, label: portLabel(p.name, p.width), width: p.width || 1 }));
 			return out;
 		},
 		shape: _ => `<rect class="glow" x="6" y="6" width="${w - 12}" height="${h - 12}" rx="4"
@@ -651,8 +650,8 @@ function schTypeDef(sch) {
 			const list = schPortList(sch);
 			const insL = list.filter(p => p.dir === "in"), outsL = list.filter(p => p.dir === "out");
 			const out = [];
-			insL.forEach((p, i) => out.push({ id: p.id, dir: "in", dx: 0, dy: 22 * (i + 1), label: p.name, width: p.width }));
-			outsL.forEach((p, i) => out.push({ id: p.id, dir: "out", dx: w, dy: 22 * (i + 1), label: p.name, width: p.width }));
+			insL.forEach((p, i) => out.push({ id: p.id, dir: "in", dx: 0, dy: 22 * (i + 1), label: portLabel(p.name, p.width), width: p.width }));
+			outsL.forEach((p, i) => out.push({ id: p.id, dir: "out", dx: w, dy: 22 * (i + 1), label: portLabel(p.name, p.width), width: p.width }));
 			return out;
 		},
 		shape: _ => `<rect class="glow" x="6" y="6" width="${w - 12}" height="${h - 12}" rx="4"

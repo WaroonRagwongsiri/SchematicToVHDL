@@ -168,7 +168,7 @@ function render() {
 			// label follows the actual route (sits on the adjustable segment);
 			// bus wires show the range like OP3[7:0] (same notation as I/O markers)
 			let labText = w.name;
-			if (isBus) labText = `${w.name}(${(wWidth.get(w.id) || 1) - 1}:0)`;
+			if (isBus) labText = `${w.name}[${(wWidth.get(w.id) || 1) - 1}:0]`;
 			let lx, ly;
 			if (r.kind === "poly") { const m = r.pts[Math.floor(r.pts.length / 2)]; lx = m.x; ly = m.y - 6; }
 			else {
@@ -273,7 +273,7 @@ function render() {
 				// label shows the REAL net width (from the source if driven)
 				const jw = jWires[0];
 				const eff = jw ? (wWidth.get(jw.id) || c.params.busWidth) : c.params.busWidth;
-				const text = sanId(c.params.busName) + "(" + (eff - 1) + ":0)";
+				const text = sanId(c.params.busName) + "[" + (eff - 1) + ":0]";
 				// place the label on the clear side of the host wire: above a
 				// horizontal run, beside a vertical one (never through the stroke)
 				let horiz = true, sign = 1;
