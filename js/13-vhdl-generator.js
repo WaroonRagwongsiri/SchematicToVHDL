@@ -323,23 +323,29 @@ function generateSchVhdl(sch) {
 		/* ----- BUS TAP: one bit in or out of a bus ----- */
 		if (c.type === "BUSTAP") {
 			const bit = c.params.bit ?? 0;
+			const width = Math.max(1, c.params.width || 1);
+			const hi = bit + width - 1;
 			const sw = driverWidth(c.id, "d");   // real bus width, traced live
 			if (c.params.mode === "merge") {
-				// the bus is assembled FROM taps: write this bit. Handled with the output
-				// assignments below (busMerges) so it lands after the bus signal exists.
+				// the bus is assembled FROM taps: write this bit range. Handled with the
+				// output assignments below (busMerges) so it lands after the bus signal exists.
 				const v = driver(c.id, "y");
 				const busSig = busSignalOf(c);
 				if (!busSig) warns.push(`${compDisplay(c)} ยังไม่ได้เกาะกับสายบัส`);
 				else if (!v) warns.push(`${compDisplay(c)} ยังไม่มีสัญญาณเข้าขาบิต`);
 				else {
 					const ceiling = fixedWidthOf[busSig];
-					if (ceiling !== undefined && bit >= ceiling) {
-						warns.push(`${compDisplay(c)} บิต ${bit} เกินความกว้างของขา '${busSig}' (0..${ceiling - 1}) — ไม่ถูกต่อ`);
+					if (ceiling !== undefined && hi >= ceiling) {
+						warns.push(`${compDisplay(c)} บิต ${width > 1 ? `${hi}:${bit}` : bit} เกินความกว้างของขา '${busSig}' (0..${ceiling - 1}) — ไม่ถูกต่อ`);
 					} else {
 						const set = busMergeBits[busSig] || (busMergeBits[busSig] = new Set());
-						if (set.has(bit)) warns.push(`${compDisplay(c)} เขียนบิต ${bit} ของ '${busSig}' ซ้ำกับ tap อื่น — จะกลายเป็น multiple driver`);
-						set.add(bit);
-						busMerges.push(`  ${busSig}(${bit}) <= ${v};`);
+						let dup = false;
+						for (let i = bit; i <= hi; i++) {
+							if (set.has(i)) dup = true;
+							set.add(i);
+						}
+						if (dup) warns.push(`${compDisplay(c)} เขียนบิต ${width > 1 ? `${hi}:${bit}` : bit} ของ '${busSig}' ซ้ำกับ tap อื่น — จะกลายเป็น multiple driver`);
+						busMerges.push(width > 1 ? `  ${busSig}(${hi} downto ${bit}) <= ${v};` : `  ${busSig}(${bit}) <= ${v};`);
 					}
 				}
 				return;
@@ -348,9 +354,9 @@ function generateSchVhdl(sch) {
 			let expr = null;
 			if (!src) warns.push(`${compDisplay(c)} ยังไม่ได้เกาะกับสายบัส — ใช้ค่า '0' แทน`);
 			else if (!sw || sw <= 1) warns.push(`${compDisplay(c)} ต้องเกาะกับสายบัส (กว้าง > 1 bit) แต่ได้สัญญาณ ${sw || 1} bit — ใช้ค่า '0' แทน`);
-			else if (bit > sw - 1) warns.push(`${compDisplay(c)} เลือกบิต (${bit}) เกินช่วงบัสต้นทาง (${sw - 1}:0) — ใช้ค่า '0' แทน`);
-			else expr = `${src}(${bit})`;
-			concurrent.push(`  ${c._nets.y} <= ${expr || "'0'"};`);
+			else if (hi > sw - 1) warns.push(`${compDisplay(c)} เลือกบิต (${width > 1 ? `${hi}:${bit}` : bit}) เกินช่วงบัสต้นทาง (${sw - 1}:0) — ใช้ค่า '0' แทน`);
+			else expr = width > 1 ? `${src}(${hi} downto ${bit})` : `${src}(${bit})`;
+			concurrent.push(`  ${c._nets.y} <= ${expr || zlit(width)};`);
 			return;
 		}
 		/* ----- ENCODER (priority) ----- */

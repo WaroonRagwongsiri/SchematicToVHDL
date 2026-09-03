@@ -116,7 +116,7 @@ function onPortClick(c, p) {
 	const fp = getPort(fc, fromPort.pid); const tp = getPort(tc, toPort.pid);
 	const fw = fp.width || 1, tw = tp.width || 1;
 	// a BUS TAP's d pin takes any bus width; junctions are width-transparent
-	if (fw !== tw && fc.type !== "JUNCTION" && tc.type !== "JUNCTION" && tc.type !== "BUSTAP") {
+	if (fw !== tw && fc.type !== "JUNCTION" && tc.type !== "JUNCTION" && !(tc.type === "BUSTAP" && toPort.pid === "d")) {
 		toast(`Width mismatch: ${fw} → ${tw}`, "warn");
 	}
 	// waypoints drawn by the user → honour the exact route (ordered from source

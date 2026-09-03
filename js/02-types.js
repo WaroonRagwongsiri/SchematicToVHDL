@@ -300,9 +300,10 @@ const TYPES = {
 	   student from having to pick a mode. */
 	BUSTAP: {
 		label: "Bus Tap", category: "bus",
-		defaultParams: { bit: 0, dir: "right", mode: "split" },
+		defaultParams: { bit: 0, width: 1, dir: "right", mode: "split" },
 		paramSchema: [
 			{ key: "bit", label: "บิตที่ ", type: "int", min: 0, max: 31 },
+			{ key: "width", label: "ความกว้าง (บิต)", type: "int", min: 1, max: 32 },
 			{ key: "mode", label: "ทิศทางบิต", type: "select", options: ["split", "merge"] },
 			{ key: "dir", label: "หันไปทาง", type: "select", options: ["right", "down", "left", "up"] },
 		],
@@ -315,8 +316,9 @@ const TYPES = {
 			// merge = write a bit INTO the bus (the thin wire drives y)
 			// d sits on the BASE of the triangle, y at the TIP.
 			const merge = p.mode === "merge";
+			const w = Math.max(1, p.width || 1);
 			const D = { id: "d", dir: "in", width: 2, label: "" };
-			const Y = { id: "y", dir: merge ? "in" : "out", width: 1, label: "" };
+			const Y = { id: "y", dir: merge ? "in" : "out", width: w, label: "" };
 			switch (p.dir) {
 				case "down": return [{ ...D, dx: 11, dy: 0 }, { ...Y, dx: 11, dy: 33 }];
 				case "up": return [{ ...D, dx: 11, dy: 33 }, { ...Y, dx: 11, dy: 0 }];
@@ -326,6 +328,8 @@ const TYPES = {
 		},
 		shape(p) {
 			const bit = p.bit ?? 0;
+			const w = Math.max(1, p.width || 1);
+			const label = w > 1 ? `${bit + w - 1}:${bit}` : `${bit}`;
 			const W = (p.dir === "down" || p.dir === "up") ? 22 : 33;
 			// a CLOSED triangle: the broad BASE lies flush ON the bus (the d side) and the
 			// TIP points at the thin wire — the ISE rip. Four orientations; the bit number
@@ -341,7 +345,7 @@ const TYPES = {
 			const anchor = vert ? "start" : "middle";
 			return `<path class="glow" d="${tri}" fill="var(--gate-fill)" stroke="var(--wire-bus)" stroke-width="1.8"/>
               <text x="${lx}" y="${ly}" text-anchor="${anchor}" font-size="8"
-                font-family="monospace" fill="var(--ink-dim)">${bit}</text>`;
+                font-family="monospace" fill="var(--ink-dim)">${label}</text>`;
 		}
 	},
 

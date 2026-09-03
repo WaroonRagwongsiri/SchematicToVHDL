@@ -224,13 +224,17 @@ function runSynthesis() {
 			// BUS TAP's d pin accepts a bus of ANY width — validate bus-ness + the bit number
 			if (tc.type === "BUSTAP" && tp.id === "d") {
 				const bit = tc.params.bit ?? 0;
+				const width = Math.max(1, tc.params.width || 1);
+				const hi = bit + width - 1;
 				if (fw < 2) issues.push({
 					lvl: "err",
 					msg: `Bus Tap ต้องเกาะกับสายบัส (กว้าง > 1 bit) แต่ต่อกับ ${compDisplay(src.c)} (${fw} bit)`, ref: sch.name, schId: sch.id, cid: tc.id
 				});
-				else if (bit > fw - 1) issues.push({
+				else if (hi > fw - 1) issues.push({
 					lvl: "err",
-					msg: `Bus Tap แตะบิต ${bit} แต่บัสมีช่วงแค่ [${fw - 1}:0]`, ref: sch.name, schId: sch.id, cid: tc.id
+					msg: width > 1
+						? `Bus Tap แตะช่วงบิต [${hi}:${bit}] แต่บัสมีช่วงแค่ [${fw - 1}:0]`
+						: `Bus Tap แตะบิต ${bit} แต่บัสมีช่วงแค่ [${fw - 1}:0]`, ref: sch.name, schId: sch.id, cid: tc.id
 				});
 				return;
 			}
