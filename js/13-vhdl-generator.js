@@ -114,6 +114,59 @@ function generateSchVhdl(sch) {
 		});
 	});
 
+	// Same walk as busSignalOf below, but returns the raw (component, pin) a merge
+	// tap's bus side lands on instead of resolving straight to a signal name — lets
+	// the pre-pass right after use it to decide whether a target signal needs to be
+	// allocated (a sub-instance "in" pin never gets one from the loop above, which
+	// only allocates _nets entries for "out"-direction ports).
+	function resolveMergeTargetPin(tap) {
+		const seen = new Set();
+		const walk = cid => {
+			if (seen.has(cid)) return null;
+			seen.add(cid);
+			for (const w of sch.wires) {
+				const ends = [[w.from, w.to], [w.to, w.from]];
+				for (const [a, b] of ends) {
+					if (a.cid !== cid) continue;
+					const oc = comp(b.cid, sch);
+					if (!oc) continue;
+					if (oc.type === "JUNCTION") { const r = walk(oc.id); if (r) return r; }
+					// a sibling tap's bus-side pin is not a landing point — same bus,
+					// not a sink. busSignalOf below skips these too, incidentally (a
+					// BUSTAP's "d" pin, always dir "in", never gets a _nets entry).
+					else if (oc.type === "BUSTAP" && b.pid === "d") continue;
+					else return { oc, pid: b.pid };
+				}
+			}
+			return null;
+		};
+		const dw = sch.wires.find(w => w.to.cid === tap.id && w.to.pid === "d");
+		if (!dw) return null;
+		const j = comp(dw.from.cid, sch);
+		if (!j) return null;
+		return j.type === "JUNCTION" ? walk(j.id) : { oc: j, pid: dw.from.pid };
+	}
+	// Pre-pass: allocate a target signal for any merge network that lands on a
+	// sub-instance's vector "in" pin, BEFORE the main pass below runs — that pass
+	// emits statements/port-maps in schematic array order, so the sub-instance may
+	// be processed before the BUSTAP taps that feed it. The pin's width is fixed by
+	// its own declaration (unlike an OUT marker's freely-inferred width), so it's
+	// recorded as a hard ceiling in fixedWidthOf for the merge-write step to clamp to.
+	const fixedWidthOf = {};   // sigName -> contractual width ceiling (sub-instance "in" pins only)
+	inners.forEach(c => {
+		if (c.type !== "BUSTAP" || c.params.mode !== "merge") return;
+		const target = resolveMergeTargetPin(c);
+		if (!target) return;                                    // unwired — main loop warns later
+		const { oc, pid } = target;
+		if (oc.type === "OUT" || oc.type === "JUNCTION") return; // already handled: _net / _busSig
+		const p = getPort(oc, pid);
+		if (!p || p.dir !== "in") return;
+		if (!oc._nets || oc._nets[pid]) return;                  // no bucket, or already allocated
+		oc._nets[pid] = uniq(`${sanId(oc.label || oc.type)}_${pid}_bus`);
+		oc._netW[pid] = p.width || 1;
+		fixedWidthOf[oc._nets[pid]] = p.width || 1;
+	});
+
 	// explicit wire names override — via uniq() so a duplicate name or a name
 	// colliding with a port never produces two identical signal declarations
 	const renamedPorts = new Set();
@@ -132,6 +185,16 @@ function generateSchVhdl(sch) {
 
 	// width-aware zero literal
 	const zlit = w => (w || 1) > 1 ? "(others => '0')" : "STD_LOGIC'('0')";
+
+	// grow a declared width to fit whatever bits the merge taps actually wrote —
+	// used for OUT ports and floating-bus junctions, whose declared width is only
+	// ever a default, never a hard contract (unlike a sub-instance pin, clamped
+	// separately via fixedWidthOf before a bit is ever recorded here)
+	function inferredWidth(sigName, declaredWidth) {
+		const bits = busMergeBits[sigName];
+		if (!bits || !bits.size) return declaredWidth || 1;
+		return Math.max(declaredWidth || 1, Math.max(...bits) + 1);
+	}
 
 	function driver(cid, pid, visited) {
 		visited = visited || new Set();
@@ -174,6 +237,7 @@ function generateSchVhdl(sch) {
 	const processes = [];
 	const subInstances = [];
 	const busMerges = [];        // "B(3) <= sig;" lines from merge taps
+	const busMergeBits = {};     // sigName -> Set of bit indices actually written by merge taps
 	/* The signal a merge tap writes into: follow its bus pin through the junctions to
 	   whatever real port sits on that net. An OUTPUT marker gives its own name. */
 	function busSignalOf(tap) {
@@ -267,7 +331,17 @@ function generateSchVhdl(sch) {
 				const busSig = busSignalOf(c);
 				if (!busSig) warns.push(`${compDisplay(c)} ยังไม่ได้เกาะกับสายบัส`);
 				else if (!v) warns.push(`${compDisplay(c)} ยังไม่มีสัญญาณเข้าขาบิต`);
-				else busMerges.push(`  ${busSig}(${bit}) <= ${v};`);
+				else {
+					const ceiling = fixedWidthOf[busSig];
+					if (ceiling !== undefined && bit >= ceiling) {
+						warns.push(`${compDisplay(c)} บิต ${bit} เกินความกว้างของขา '${busSig}' (0..${ceiling - 1}) — ไม่ถูกต่อ`);
+					} else {
+						const set = busMergeBits[busSig] || (busMergeBits[busSig] = new Set());
+						if (set.has(bit)) warns.push(`${compDisplay(c)} เขียนบิต ${bit} ของ '${busSig}' ซ้ำกับ tap อื่น — จะกลายเป็น multiple driver`);
+						set.add(bit);
+						busMerges.push(`  ${busSig}(${bit}) <= ${v};`);
+					}
+				}
 				return;
 			}
 			const src = driver(c.id, "d");
@@ -454,7 +528,7 @@ function generateSchVhdl(sch) {
 			const maps = [];
 			portsArr.forEach(p => {
 				if (p.dir === "in") {
-					const v = driver(c.id, p.id);
+					const v = c._nets[p.id] || driver(c.id, p.id);
 					if (!v) warns.push(`${compDisplay(c)} ขา '${p.label}' ยังไม่ได้ต่อสาย — ใช้ค่า '0' แทน`);
 					maps.push(`${p.label} => ${v || zlit(p.width)}`);
 				} else {
@@ -472,7 +546,7 @@ function generateSchVhdl(sch) {
 			const maps = [];
 			customPorts(cc).forEach(p => {
 				if (p.dir === "in") {
-					const v = driver(c.id, p.name);
+					const v = c._nets[p.name] || driver(c.id, p.name);
 					if (!v) warns.push(`${compDisplay(c)} ขา '${p.name}' ยังไม่ได้ต่อสาย — ใช้ค่า '0' แทน`);
 					maps.push(`${p.name} => ${v || zlit(p.width)}`);
 				} else {
@@ -489,7 +563,7 @@ function generateSchVhdl(sch) {
 			const maps = [];
 			td.ports({}).forEach(p => {
 				if (p.dir === "in") {
-					const v = driver(c.id, p.id);
+					const v = c._nets[p.id] || driver(c.id, p.id);
 					if (!v) warns.push(`${compDisplay(c)} ขา '${p.id}' ยังไม่ได้ต่อสาย — ใช้ค่า '0' แทน`);
 					maps.push(`${p.id} => ${v || zlit(p.width)}`);
 				} else {
@@ -507,12 +581,20 @@ function generateSchVhdl(sch) {
 		const v = driver(c.id, "i");
 		// a bus built up bit by bit by merge taps has no single driver — the taps ARE
 		// its drivers, so leaving it unassigned here is correct, not an omission
-		const byTaps = busMerges.some(l => l.trim().startsWith(c._net + "("));
+		const byTaps = !!busMergeBits[c._net];
 		if (byTaps) return;
 		if (!v) { warns.push(`OUTPUT '${c._net}' ยังไม่ได้ต่อสาย — ใช้ค่า '0' แทน`); outLines.push(`  ${c._net} <= ${zlit(c.params.width)};`); }
 		else outLines.push(`  ${c._net} <= ${v};`);
 	});
 	busMerges.forEach(l => outLines.push(l));
+
+	// a gap in a merge group (e.g. taps for bits 0,1,3 but nothing for bit 2)
+	// leaves that bit undriven — surface it like any other incomplete wiring
+	Object.keys(busMergeBits).forEach(sig => {
+		const bits = busMergeBits[sig];
+		const max = Math.max(...bits);
+		for (let i = 0; i < max; i++) if (!bits.has(i)) warns.push(`บิต ${i} ของ '${sig}' ไม่มี tap ต่อ — สัญญาณจะไม่ถูก drive ครบ`);
+	});
 
 	/* ---- assemble ---- */
 	const portDecls = [];
@@ -521,7 +603,8 @@ function generateSchVhdl(sch) {
 		portDecls.push(`    ${c._net} : in  ${t}`);
 	});
 	outputs.forEach(c => {
-		const t = c.params.width > 1 ? `STD_LOGIC_VECTOR(${c.params.width - 1} downto 0)` : "STD_LOGIC";
+		const w = inferredWidth(c._net, c.params.width);
+		const t = w > 1 ? `STD_LOGIC_VECTOR(${w - 1} downto 0)` : "STD_LOGIC";
 		portDecls.push(`    ${c._net} : out ${t}`);
 	});
 
@@ -539,10 +622,11 @@ function generateSchVhdl(sch) {
 	const sigScalars = [];
 	const sigVectors = [];
 	inners.forEach(c => {
-		if (c.type === "JUNCTION" && c._busSig) { sigVectors.push({ name: c._busSig, w: c._busW }); return; }
+		if (c.type === "JUNCTION" && c._busSig) { sigVectors.push({ name: c._busSig, w: inferredWidth(c._busSig, c._busW) }); return; }
 		if (!c._nets) return;
 		Object.keys(c._nets).forEach(pid => {
-			const wdt = (c._netW && c._netW[pid]) || 1;
+			const baseW = (c._netW && c._netW[pid]) || 1;
+			const wdt = inferredWidth(c._nets[pid], baseW);
 			if (wdt > 1) sigVectors.push({ name: c._nets[pid], w: wdt });
 			else if (!ffInit[c._nets[pid]]) sigScalars.push(c._nets[pid]);
 		});
