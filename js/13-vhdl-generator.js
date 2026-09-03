@@ -270,7 +270,7 @@ function generateSchVhdl(sch) {
 		const portsArr = td.ports(c.params || {});
 		const inputsPorts = portsArr.filter(p => p.dir === "in");
 		const driverFor = pid => {
-			const v = driver(c.id, pid);
+			const v = (c._nets && c._nets[pid]) || driver(c.id, pid);
 			if (!v) {
 				const pw = (portsArr.find(p => p.id === pid) || {}).width || 1;
 				warns.push(`${compDisplay(c)} ขา '${pid}' ยังไม่ได้ต่อสาย — ใช้ค่า '0' แทน`);
@@ -498,7 +498,8 @@ function generateSchVhdl(sch) {
 			const tie = () => outs.forEach(pid => concurrent.push(`  ${c._nets[pid]} <= '0';`));
 			let A, B, arr;
 			if (cmpIsBus(c.params)) {
-				const av = driver(c.id, "a"), bv = driver(c.id, "b");
+				const av = (c._nets && c._nets.a) || driver(c.id, "a");
+				const bv = (c._nets && c._nets.b) || driver(c.id, "b");
 				if (!av || !bv || isLit(av) || isLit(bv)) {
 					warns.push(`${compDisplay(c)} ยังต่อขา A/B ไม่ครบ — ผลลัพธ์ถูกตรึงเป็น '0'`);
 					tie(); return;
