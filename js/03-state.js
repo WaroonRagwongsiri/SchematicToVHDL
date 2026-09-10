@@ -62,7 +62,17 @@ function orderedSchIds() {
 	return ids;
 }
 
+const _compIndexCache = new WeakMap();
+
 function comp(cid, sch = activeSch()) {
 	if (!sch || !Array.isArray(sch.components)) return null;
+	let idx = _compIndexCache.get(sch.components);
+	if (!idx) {
+		idx = new Map();
+		for (const c of sch.components) idx.set(c.id, c);
+		_compIndexCache.set(sch.components, idx);
+	}
+	const found = idx.get(cid);
+	if (found !== undefined) return found;
 	return sch.components.find(component => component.id === cid);
 }

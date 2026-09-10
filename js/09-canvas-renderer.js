@@ -50,17 +50,28 @@ function render() {
 	const addV = r => routeParts(r).forEach(part => {
 		if (part.t === "v") usedV.push({ x: part.x, y1: Math.min(part.y1, part.y2), y2: Math.max(part.y1, part.y2) });
 	});
+	// prebuilt Map<junctionId, wire[]> so wireOpts -> portExitH -> junctionExitH can
+	// look up a junction's attached wires in O(1) instead of scanning all sch.wires
+	// per endpoint resolved. Safe here because render() never mutates sch.wires while
+	// iterating (unlike healLayout's sub-passes, which still use the plain scan).
+	const junctionWires = new Map();
+	sch.wires.forEach(w => {
+		[w.from.cid, w.to.cid].forEach(cid => {
+			if (!junctionWires.has(cid)) junctionWires.set(cid, []);
+			junctionWires.get(cid).push(w);
+		});
+	});
 	// pass 1: straight, waypoint, and manually-routed wires are fixed obstacles
 	sch.wires.forEach(w => {
 		const pp = wireEnds(w); if (!pp) return;
-		const r = wireRoute(w, pp[0], pp[1], wireOpts(w));
+		const r = wireRoute(w, pp[0], pp[1], wireOpts(w, sch, junctionWires));
 		if (r.kind !== "z" || typeof w.mx === "number") { wireRoutes.set(w.id, r); addV(r); }
 	});
 	// pass 2: default staircases slide sideways to a free column
 	sch.wires.forEach(w => {
 		if (wireRoutes.has(w.id)) return;
 		const pp = wireEnds(w); if (!pp) return;
-		const r = wireRoute(w, pp[0], pp[1], wireOpts(w));
+		const r = wireRoute(w, pp[0], pp[1], wireOpts(w, sch, junctionWires));
 		if (AUTO_ARRANGE && !layoutLocked(sch)) {
 			const lo = r.x1 + WIRE_MINLEG, hi = r.x2 - WIRE_MINLEG;
 			const yA = Math.min(r.y1, r.y2), yB = Math.max(r.y1, r.y2);
@@ -75,16 +86,20 @@ function render() {
 		wireRoutes.set(w.id, r); addV(r);
 	});
 	// all vertical runs across every wire — used to place crossing hops
-	// Crossing hops cost O(wires²) per frame. Skip them when the plain style is
-	// selected, while the user is actively dragging/panning (redraws every
-	// mousemove), and in very large schematics.
-	const fastRender = HOP_STYLE !== "hop" || !!(state.drag || state.wireDrag || state.pan) || sch.wires.length > 160;
+	// Skip them when the plain style is selected, while the user is actively
+	// dragging/panning (redraws every mousemove), and in pathological schematics
+	// (hoppedPathD does a sorted binary-search lookup per horizontal segment, so
+	// this is no longer O(wires²) — the cutoff is just a safety valve).
+	const fastRender = HOP_STYLE !== "hop" || !!(state.drag || state.wireDrag || state.pan) || sch.wires.length > 2000;
 	const allV = [];
-	if (!fastRender) wireRoutes.forEach((r, wid) => {
-		routeParts(r).forEach(part => {
-			if (part.t === "v") allV.push({ x: part.x, y1: part.y1, y2: part.y2, wid });
+	if (!fastRender) {
+		wireRoutes.forEach((r, wid) => {
+			routeParts(r).forEach(part => {
+				if (part.t === "v") allV.push({ x: part.x, y1: part.y1, y2: part.y2, wid });
+			});
 		});
-	});
+		allV.sort((a, b) => a.x - b.x);
+	}
 	// wire widths derived once per frame from the driving ports (never cached)
 	const wWidth = new Map();
 	sch.wires.forEach(w => wWidth.set(w.id, netWidth(w, sch)));

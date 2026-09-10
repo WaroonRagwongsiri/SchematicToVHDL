@@ -248,17 +248,23 @@ function portSideH(c, pid) {
    PERPENDICULAR to the host wire passing through (horizontal host → the branch
    exits vertically out of the top/bottom of the square, and vice-versa).
    Returns true if the attached wire should be horizontal at the junction. */
-function junctionExitH(j, self, sch) {
+function junctionExitH(j, self, sch, idx) {
 	const jp = portPos(j, "j");
 	let horiz = false, vert = false;
-	sch.wires.forEach(w => {
+	const scan = w => {
 		if (w === self || (w.from.cid !== j.id && w.to.cid !== j.id)) return;
 		const oc = comp(w.from.cid === j.id ? w.to.cid : w.from.cid, sch);
 		const op = oc && portPos(oc, w.from.cid === j.id ? w.to.pid : w.from.pid);
 		if (!op) return;
 		if (Math.abs(op.y - jp.y) < 0.5) horiz = true;   // a host runs horizontally
 		if (Math.abs(op.x - jp.x) < 0.5) vert = true;   // a host runs vertically
-	});
+	};
+	// idx (when given) is a prebuilt Map<junctionId, wire[]> — avoids the O(wires)
+	// scan below. Only safe when sch.wires isn't mutated mid-iteration by the caller
+	// (true for render(), NOT true for healLayout's sub-passes — those omit idx and
+	// fall through to the scan, unchanged).
+	if (idx) (idx.get(j.id) || []).forEach(scan);
+	else sch.wires.forEach(scan);
 	// exit perpendicular: horizontal host → false (exit vertical); vertical → true
 	if (horiz && !vert) return false;
 	if (vert && !horiz) return true;
@@ -267,8 +273,8 @@ function junctionExitH(j, self, sch) {
 /* a Bus Tap / Ripper bus-side pin ("d") accepts the bus from ANY direction, like a
    junction — the wire approaches along whichever axis it mostly runs, so the thick
    bus never has to bend perpendicular INTO the tap (the classic "เส้นหัก"). */
-function portExitH(c, pid, w, sch) {
-	if (c.type === "JUNCTION") return junctionExitH(c, w, sch);
+function portExitH(c, pid, w, sch, idx) {
+	if (c.type === "JUNCTION") return junctionExitH(c, w, sch, idx);
 	if (c.type === "BUSTAP" && pid === "d") {
 		const oCid = w.from.cid === c.id ? w.to.cid : w.from.cid;
 		const oPid = w.from.cid === c.id ? w.to.pid : w.from.pid;
@@ -277,12 +283,13 @@ function portExitH(c, pid, w, sch) {
 	}
 	return portSideH(c, pid);
 }
-/* the fromH/toH routing hints for a wire, from its two ports' sides */
-function wireOpts(w, sch) {
+/* the fromH/toH routing hints for a wire, from its two ports' sides.
+   idx (optional): prebuilt Map<junctionId, wire[]> — see junctionExitH. */
+function wireOpts(w, sch, idx) {
 	sch = sch || activeSch();
 	const a = comp(w.from.cid, sch), b = comp(w.to.cid, sch);
-	const fromH = a ? portExitH(a, w.from.pid, w, sch) : true;
-	const toH = b ? portExitH(b, w.to.pid, w, sch) : true;
+	const fromH = a ? portExitH(a, w.from.pid, w, sch, idx) : true;
+	const toH = b ? portExitH(b, w.to.pid, w, sch, idx) : true;
 	// a bus tap/ripper bus-pin as the DESTINATION may force a straight perpendicular
 	// entry so the thick bus never bends INTO it. Kept localized to tap "d" pins so
 	// junction routing (which has always ignored toH) is completely unaffected.
@@ -405,9 +412,20 @@ function routeParts(r) {
 		{ t: "h", x1: r.x2 - L, x2: r.x2, y: r.y2 },
 	];
 }
+/* Lowest index i in a array sorted ascending by .x such that a[i].x >= x. */
+function lowerBoundX(a, x) {
+	let lo = 0, hi = a.length;
+	while (lo < hi) {
+		const mid = (lo + hi) >> 1;
+		if (a[mid].x < x) lo = mid + 1; else hi = mid;
+	}
+	return lo;
+}
 /* Build an SVG path for a route, drawing a small semicircular hop wherever a
    horizontal run crosses another wire's vertical run — so crossings that are
-   NOT electrical connections read clearly instead of looking joined. */
+   NOT electrical connections read clearly instead of looking joined.
+   allV must be sorted ascending by .x (render() sorts it once per frame) — this
+   binary-searches the (hlo,hhi) sub-range instead of scanning every entry. */
 function hoppedPathD(r, allV, wid) {
 	const HR = 5;
 	const parts = routeParts(r);
@@ -419,10 +437,12 @@ function hoppedPathD(r, allV, wid) {
 		const dir = part.x2 >= part.x1 ? 1 : -1;
 		const y = part.y, hlo = Math.min(part.x1, part.x2), hhi = Math.max(part.x1, part.x2);
 		const xs = [];
-		for (const v of allV) {
-			if (v.wid === wid) continue;
+		const lo = lowerBoundX(allV, hlo + HR);
+		for (let i = lo; i < allV.length && allV[i].x < hhi - HR; i++) {
+			const v = allV[i];
+			if (v.wid === wid || v.x <= hlo + HR) continue;   // exact-boundary matches excluded, as before
 			const vlo = Math.min(v.y1, v.y2), vhi = Math.max(v.y1, v.y2);
-			if (v.x > hlo + HR && v.x < hhi - HR && y > vlo + 2 && y < vhi - 2) xs.push(v.x);
+			if (y > vlo + 2 && y < vhi - 2) xs.push(v.x);
 		}
 		// de-dupe near-coincident crossings, order along travel direction
 		xs.sort((a, b) => a - b);
