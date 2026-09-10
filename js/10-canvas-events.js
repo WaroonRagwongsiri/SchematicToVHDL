@@ -36,11 +36,7 @@ function startDrag(ev, c) {
 		.map(id => comp(id))
 		.filter(Boolean)
 		.map(cc => ({ c: cc, ox: m.x - cc.x, oy: m.y - cc.y }));
-	// if the symbol ALREADY sits on a wire (an old file, a paste, a drop) the no-covering
-	// rule must not trap it there forever — only a drag that CREATES an overlap is
-	// refused, so a bad position can always be dragged out of.
-	const coverAtStart = compsCoverWire(activeSch(), items.map(d => d.c));
-	state.drag = { items, anchor: c.id, sx: m.x, sy: m.y, moved: false, shift: ev.shiftKey, prevMulti, coverAtStart };
+	state.drag = { items, anchor: c.id, sx: m.x, sy: m.y, moved: false, shift: ev.shiftKey, prevMulti };
 	render(); renderInspector();
 }
 canvas.addEventListener("mousemove", ev => {
@@ -61,7 +57,6 @@ canvas.addEventListener("mousemove", ev => {
 			}
 		}
 		if (state.drag.moved) {
-			const was = state.drag.items.map(d => ({ x: d.c.x, y: d.c.y }));
 			state.drag.items.forEach(d => {
 				// snap what the user SEES. A junction's dot is drawn at its box + 6, and 6
 				// is not a multiple of GRID(11) — snapping the box lands the dot at 11k+6,
@@ -71,48 +66,23 @@ canvas.addEventListener("mousemove", ev => {
 				d.c.x = snap(state.mouse.x - d.ox + q) - q;
 				d.c.y = snap(state.mouse.y - d.oy + q) - q;
 			});
-			// the other half of "a wire may not be laid on a gate": a symbol may not be
-			// parked ON a wire either. Same end state, opposite gesture — so the same
-			// answer: hold the last clear position and let the symbol stop against the wire.
-			if (!state.drag.coverAtStart && compsCoverWire(activeSch(), state.drag.items.map(d => d.c))) {
-				state.drag.items.forEach((d, i) => { d.c.x = was[i].x; d.c.y = was[i].y; });
-				bodyBlockNudge();
-			}
 			render();
 		}
 	} else if (state.cornerDrag) {
 		const cd = state.cornerDrag;
-		const prevPt = cd.w.pts[cd.index] ? { x: cd.w.pts[cd.index].x, y: cd.w.pts[cd.index].y } : null;
 		cd.w.pts[cd.index] = { x: snap(state.mouse.x), y: snap(state.mouse.y) };
-		// the wire may not be dragged onto a gate: keep the last position that was clear,
-		// so the run stops against the symbol instead of crossing it
-		if (routeCutsBody(activeSch(), cd.w)) {
-			if (prevPt) cd.w.pts[cd.index] = prevPt;
-			bodyBlockNudge();
-		} else {
-			cd.moved = true;
-		}
+		cd.moved = true;
 		render();
 	} else if (state.wireDrag) {
 		const wd = state.wireDrag;
 		if (!wd.moved && Math.abs(state.mouse.x - wd.m0.x) + Math.abs(state.mouse.y - wd.m0.y) > 4) wd.moved = true;
 		if (wd.moved) {
 			if (wd.kind === "z") {
-				const prev = wd.w.mx;
 				wd.w.mx = snap(state.mouse.x);
-				if (routeCutsBody(activeSch(), wd.w)) {
-					if (prev === undefined) delete wd.w.mx; else wd.w.mx = prev;
-					bodyBlockNudge();
-				}
 				render();
 			}
 			else if (wd.kind === "s") {
-				const prev = wd.w.my;
 				wd.w.my = snap(state.mouse.y);
-				if (routeCutsBody(activeSch(), wd.w)) {
-					if (prev === undefined) delete wd.w.my; else wd.w.my = prev;
-					bodyBlockNudge();
-				}
 				render();
 			}
 			else if (wd.kind === "h" || wd.kind === "v" || wd.kind === "l" || wd.kind === "lh") {
@@ -120,14 +90,8 @@ canvas.addEventListener("mousemove", ev => {
 				// plants a manual waypoint at the drag point, switching the wire onto the
 				// same user-routed (poly) path used by hand-drawn multi-corner wires. From
 				// then on it's a normal draggable corner (see cornerDrag / w.pts above).
-				const hadPts = !!wd.w.pts;
-				const prevPt = hadPts ? { x: wd.w.pts[0].x, y: wd.w.pts[0].y } : null;
 				if (!wd.w.pts) wd.w.pts = [{ x: 0, y: 0 }];
 				wd.w.pts[0] = { x: snap(state.mouse.x), y: snap(state.mouse.y) };
-				if (routeCutsBody(activeSch(), wd.w)) {
-					if (hadPts) wd.w.pts[0] = prevPt; else delete wd.w.pts;
-					bodyBlockNudge();
-				}
 				render();
 			}
 		}
@@ -330,8 +294,18 @@ canvas.addEventListener("wheel", ev => {
 }, { passive: false });
 
 /* keyboard */
+// arrow-key nudge fires healLayout()+snapshot() on a trailing debounce so holding a key
+// (OS key-repeat every ~30-50ms) doesn't re-run the full layout pass dozens of times/sec —
+// the nudge itself still applies + renders on every keydown, only the heal is deferred
+let _nudgeHealTimer = null;
+function flushNudgeHeal() {
+	if (!_nudgeHealTimer) return;
+	clearTimeout(_nudgeHealTimer); _nudgeHealTimer = null;
+	healLayout(); snapshot();
+}
 window.addEventListener("keydown", ev => {
 	if (document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
+	if (_nudgeHealTimer && !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(ev.key)) flushNudgeHeal();
 	// use ev.code (keyboard-layout independent) AND ev.key (for fallback) so Thai
 	// and other non-Latin layouts still respond to Ctrl+C / Ctrl+V etc.
 	const code = ev.code;
@@ -391,25 +365,21 @@ window.addEventListener("keydown", ev => {
 		if (selComps.length) {
 			// nudge selected components one grid step (a junction snaps by its DOT, which
 			// sits at box+6 — snapping the box would drift it half a grid off the lines)
-			const wasClear = !compsCoverWire(activeSch(), selComps);
-			const was = selComps.map(c => ({ x: c.x, y: c.y }));
 			selComps.forEach(c => {
 				const q = c.type === "JUNCTION" ? 6 : 0;
 				c.x = snap(c.x + q + dx * GRID) - q;
 				c.y = snap(c.y + q + dy * GRID) - q;
 			});
-			// a nudge may not park a symbol on a wire either (same rule as the mouse drag)
-			if (wasClear && compsCoverWire(activeSch(), selComps)) {
-				selComps.forEach((c, i) => { c.x = was[i].x; c.y = was[i].y; });
-				bodyBlockNudge(); render(); ev.preventDefault(); return;
-			}
 			// same pact as the mouse drag: a dot the user placed is theirs, so healLayout
 			// below must not re-tap it back (it would silently undo the nudge). Only when
 			// dots are what's selected — nudging a mixed block isn't aiming at its dots.
 			if (selComps.every(c => c.type === "JUNCTION"))
 				selComps.forEach(c => { (c.params || (c.params = {})).fixed = true; });
-			healLayout();   // keep branch squares at the divergence point (heal runs last)
-			snapshot(); render();
+			// keep branch squares at the divergence point (heal runs last) — deferred so
+			// held-key repeats coalesce into one heal+snapshot instead of one per repeat
+			clearTimeout(_nudgeHealTimer);
+			_nudgeHealTimer = setTimeout(flushNudgeHeal, 150);
+			render();
 		} else {
 			// nothing selected → pan the view
 			state.view.x -= dx * 60;
@@ -426,8 +396,9 @@ window.addEventListener("keyup", ev => {
 		state.spaceDown = false;
 		if (!state.pan) canvas.style.cursor = TOOL_INFO[state.tool]?.cur || "";
 	}
+	if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(ev.key)) flushNudgeHeal();
 });
-window.addEventListener("blur", () => { state.spaceDown = false; if (!state.pan) canvas.style.cursor = TOOL_INFO[state.tool]?.cur || ""; });
+window.addEventListener("blur", () => { state.spaceDown = false; if (!state.pan) canvas.style.cursor = TOOL_INFO[state.tool]?.cur || ""; flushNudgeHeal(); });
 
 /* canvas drag-drop from palette */
 canvas.addEventListener("dragover", ev => ev.preventDefault());

@@ -786,9 +786,22 @@ function separateWireOverlaps(sch) {
 		return { w, r, parts: routeParts(r) };
 	};
 	const ov = (a1, a2, b1, b2) => Math.min(Math.max(a1, a2), Math.max(b1, b2)) - Math.max(Math.min(a1, a2), Math.min(b1, b2));
+	// build the route cache ONCE — rebuilding it (wireRoute+routeParts on every wire) at
+	// the top of every guard iteration is wasted work when only a handful of entries
+	// actually change per pass; targeted refreshes below patch just what moved instead
+	const all = sch.wires.map(calc).filter(Boolean);
+	const byId = new Map(all.map(A => [A.w.id, A]));
+	const refreshJunctionWires = j => {
+		sch.wires.forEach(w2 => {
+			if (w2.from.cid !== j.id && w2.to.cid !== j.id) return;
+			const u = calc(w2);
+			if (!u) return;
+			const entry = byId.get(w2.id);
+			if (entry) { entry.r = u.r; entry.parts = u.parts; }
+		});
+	};
 	let guard = 0;
 	while (guard++ < 4) {
-		const all = sch.wires.map(calc).filter(Boolean);
 		let moved = false;
 		for (const A of all) {
 			const others = all.filter(B => B.w !== A.w && key.get(B.w.id) !== key.get(A.w.id));
@@ -861,9 +874,9 @@ function separateWireOverlaps(sch) {
 					const free = cands.find(xx => !busy(xx));
 					if (free !== undefined) { j.x = free - 6; moved = true; slid = true; break; }
 				}
-				// sibling wires attached to this junction now have STALE routes — restart
-				// the sweep instead of sliding again off stale data (junction walk-off)
-				if (slid) break;
+				// sibling wires attached to this junction now have STALE routes — refresh
+				// just those entries instead of sliding again off stale data (junction walk-off)
+				if (slid) { refreshJunctionWires(j); break; }
 				continue;
 			}
 			if (A.r.kind !== "z" && A.r.kind !== "s") continue;      // only these have a free leg
@@ -985,39 +998,6 @@ function obstaclesFor(sch, w, boxes) {
 	});
 }
 const partsCutAny = (parts, obst) => parts.some(seg => obst.some(bx => segCutsBox(seg, bx, bx.pad)));
-/* Would this wire, routed as it stands right now, lie across a symbol? avoidBodies only
-   ever fixes AUTO routes (it skips w.pts on purpose — a hand-drawn route is the user's),
-   so this is what a manual drag checks before it commits. */
-function routeCutsBody(sch, w, boxes) {
-	const a = comp(w.from.cid, sch), b = comp(w.to.cid, sch);
-	if (!a || !b) return false;
-	const p1 = portPos(a, w.from.pid), p2 = portPos(b, w.to.pid);
-	if (!p1 || !p2) return false;
-	return partsCutAny(routeParts(wireRoute(w, p1, p2, wireOpts(w, sch))), obstaclesFor(sch, w, boxes));
-}
-/* Do any of these components (mid-drag) now sit on a wire that isn't theirs? The mirror
-   of routeCutsBody: same rule, checked from the symbol's side, for when it is the GATE
-   being moved rather than the wire. Wires touching any dragged component are exempt —
-   those are its own connections and they follow its pins by design. */
-function compsCoverWire(sch, comps) {
-	const moving = new Set(comps.map(c => c && c.id).filter(Boolean));
-	const boxes = symbolBoxes(sch).filter(b => moving.has(b.id));
-	if (!boxes.length) return false;
-	for (const w of sch.wires) {
-		const a = comp(w.from.cid, sch), b = comp(w.to.cid, sch);
-		if (!a || !b) continue;
-		const p1 = portPos(a, w.from.pid), p2 = portPos(b, w.to.pid);
-		if (!p1 || !p2) continue;
-		const parts = routeParts(wireRoute(w, p1, p2, wireOpts(w, sch)));
-		for (const bx of boxes) {
-			// a wire this symbol OWNS may reach its pins (shrunk box) but still may not be
-			// run through the middle of it; anything else may not be covered at all
-			const own = bx.id === a.id || bx.id === b.id;
-			if (parts.some(seg => segCutsBox(seg, bx, own ? PIN_PAD : BODY_PAD))) return true;
-		}
-	}
-	return false;
-}
 /* The route as an ordered list of corner points (pin → … → pin). */
 function routePoints(r) {
 	const parts = routeParts(r);
@@ -1157,15 +1137,6 @@ function lockedNudge() {
 	if (now - _lockNudgeAt < 2500) return;
 	_lockNudgeAt = now;
 	toast("🔒 แผ่นนี้ล็อกการจัดวางอยู่ — กดไอคอนกุญแจเพื่อปลดล็อกก่อนย้าย", "warn", 2600);
-}
-/* same idea for a drag that would put a wire on top of a symbol — the gesture keeps
-   running, the wire just refuses to go there, and we say why (rarely) */
-let _bodyNudgeAt = 0;
-function bodyBlockNudge() {
-	const now = (typeof performance !== "undefined" && performance.now) ? performance.now() : 0;
-	if (now - _bodyNudgeAt < 2500) return;
-	_bodyNudgeAt = now;
-	toast("สายไฟลากทับ component ไม่ได้ — เส้นจะอ่านเหมือนต่อเข้ากับตัวนั้น", "warn", 2600);
 }
 /* the ONE canonical layout pass, always in this order: put each branch's dot at the
    real divergence, align fan-out dots, reflow overlapping exits, separate
