@@ -704,8 +704,10 @@ function generateSchVhdl(sch) {
 	}
 	if (subInstances.length) {
 		code += `\n  -- sub-component instantiations\n`;
+		const usedInst = {};
+		function uniqInst(b) { let n = sanId(b) || "u", i = 1; while (usedInst[n]) n = sanId(b) + "_" + (i++); usedInst[n] = 1; return n; }
 		subInstances.forEach((si, idx) => {
-			const inst = si.label ? `u_${sanId(si.label)}` : `u_${idx}_${si.inst}`;
+			const inst = si.label ? uniqInst(`u_${sanId(si.label)}`) : uniqInst(`u_${idx}_${si.inst}`);
 			// a port-less instance takes no port map clause — "port map ( )" is invalid
 			if (!si.maps.length) { code += `  ${inst} : ${si.entity};\n`; return; }
 			code += `  ${inst} : ${si.entity} port map (\n    ` +
