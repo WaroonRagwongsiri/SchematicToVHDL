@@ -3,6 +3,12 @@
 const HBASE = 56;
 const STEP = 24;
 
+// WIDTH. A gate is one bit until you say otherwise, and then it is that many bits
+// wide on every pin — which is what lets a byte-wide mux be drawn as
+// (a and not sel) or (b and sel) instead of eight copies of it. VHDL defines
+// and/or/xor/not element-wise over std_logic_vector, so the emitted expression is
+// the same; only the widths change.
+function gateWidth(p) { return clamp(Math.round((p && p.width) || 1) || 1, 1, 32); }
 function gatePortsAndSize(p, withBubble = false) {
 	const n = clamp(p.inputs || 2, 1, 8);
 	// h = 22*(n+1) puts every input at 22*i and the output at 11*(n+1) —
@@ -11,11 +17,12 @@ function gatePortsAndSize(p, withBubble = false) {
 	// width GROWS with the input count so a many-input gate stays balanced (not a thin
 	// tall sliver); always a GRID multiple so the output port lands on the grid.
 	const w = GRID * clamp(4 + n, 6, 12);   // n=2 → 66 … n=8 → 132
+	const bits = gateWidth(p);
 	const ins = [];
 	for (let i = 0; i < n; i++) {
-		ins.push({ id: "i" + i, dir: "in", dx: 0, dy: Math.round(h / (n + 1) * (i + 1)) });
+		ins.push({ id: "i" + i, dir: "in", dx: 0, dy: Math.round(h / (n + 1) * (i + 1)), width: bits });
 	}
-	const out = { id: "o", dir: "out", dx: w, dy: Math.round(h / 2) };
+	const out = { id: "o", dir: "out", dx: w, dy: Math.round(h / 2), width: bits };
 	return { ports: [...ins, out], size: { w, h } };
 }
 function gateBodyShape(p, kind) {
@@ -61,13 +68,18 @@ function gateBodyShape(p, kind) {
 	const bubble = hasBubble
 		? `<circle cx="${re + br}" cy="${cy}" r="${br}" fill="var(--gate-fill)" stroke="var(--gate-stroke)" stroke-width="1.4"/>`
 		: "";
-	return stubs + body + bubble;
+	// a wide gate must LOOK wide — the wires do (buses draw thicker), so the body says so too
+	const bits = gateWidth(p);
+	const tag = bits > 1
+		? `<text x="${w / 2}" y="${h - 1}" text-anchor="middle" font-size="8" fill="var(--muted)">${bits - 1}:0</text>` : "";
+	return stubs + body + bubble + tag;
 }
 function gateDef(kind, label, op, defaultIns = 2) {
 	return {
 		label, category: "gate",
-		defaultParams: kind === "not" || kind === "buf" ? { inputs: 1 } : { inputs: defaultIns },
-		paramSchema: kind === "not" || kind === "buf" ? [] : [{ key: "inputs", label: "Inputs", type: "int", min: 2, max: 8 }],
+		defaultParams: kind === "not" || kind === "buf" ? { inputs: 1, width: 1 } : { inputs: defaultIns, width: 1 },
+		paramSchema: (kind === "not" || kind === "buf" ? [] : [{ key: "inputs", label: "Inputs", type: "int", min: 2, max: 8 }])
+			.concat([{ key: "width", label: "ความกว้าง (bit)", type: "int", min: 1, max: 32 }]),
 		size(p) { return gatePortsAndSize(p).size; },
 		ports(p) { return gatePortsAndSize(p).ports; },
 		shape(p) { return gateBodyShape(p, kind); },
@@ -95,8 +107,8 @@ function blockShape(label, w, h, sub) {
           ${sub ? `<text x="${w / 2}" y="34" text-anchor="middle" font-size="9.5" fill="var(--ink-dim)">${sub}</text>` : ""}`;
 }
 /* IN/OUT flag geometry: width follows the label so long names never overflow */
-function ioLabel(p) { return (p.name || "") + ((p.width || 1) > 1 ? `[${p.width - 1}:0]` : ""); }
-function portLabel(name, width) { return (name || "") + ((width || 1) > 1 ? `[${width - 1}:0]` : ""); }
+function ioLabel(p) { return (p.name || "") + ((p.width || 1) > 1 ? `(${p.width - 1}:0)` : ""); }
+function portLabel(name, width) { return (name || "") + ((width || 1) > 1 ? `(${width - 1}:0)` : ""); }
 // width rounded up to a GRID multiple so the port x lands on the grid
 function ioShapeW(p) { return Math.ceil(Math.max(56, Math.round(ioLabel(p).length * 6.3) + 28) / GRID) * GRID; }
 /* ISE ships exactly four sizes of each comparator, and the SIZE decides the pin
@@ -118,8 +130,8 @@ function cmpDef(mag) {
 		ports(p) {
 			const n = Math.max(1, p.width || 2), h = sizeOf(p).h, w = 110, out = [];
 			if (cmpIsBus(p)) {
-				out.push({ id: "a", dir: "in", dx: 0, dy: 44, label: `A[${n - 1}:0]`, width: n });
-				out.push({ id: "b", dir: "in", dx: 0, dy: h - 44, label: `B[${n - 1}:0]`, width: n });
+				out.push({ id: "a", dir: "in", dx: 0, dy: 44, label: `A(${n - 1}:0)`, width: n });
+				out.push({ id: "b", dir: "in", dx: 0, dy: h - 44, label: `B(${n - 1}:0)`, width: n });
 			} else {
 				for (let i = 0; i < n; i++) out.push({ id: "a" + i, dir: "in", dx: 0, dy: 22 * (i + 1), label: "A" + i });
 				for (let i = 0; i < n; i++) out.push({ id: "b" + i, dir: "in", dx: 0, dy: 22 * (n + i + 1), label: "B" + i });
@@ -138,6 +150,41 @@ function cmpDef(mag) {
 			return blockShape((mag ? "COMPM" : "COMP") + n, 110, h, "");
 		}
 	};
+}
+/* ---------- CONST: a signal locked to a fixed value ----------
+   Written as hex because that is how a data sheet gives it (0x38, 0xF4 in the LCD
+   command tables). ONE normaliser, so the symbol, the label and the generated VHDL
+   can never disagree about what the block actually drives: the stored text is free
+   (the user may type "0xf4", "F4", or paste junk) and every reader goes through here. */
+function constWidth(p) { return clamp(Math.round((p && p.width) || 1) || 1, 1, 32); }
+function constHex(p) {
+	const w = constWidth(p), nib = Math.ceil(w / 4);
+	let h = String((p && p.value) !== undefined && p.value !== null ? p.value : "")
+		.trim().replace(/^0[xX]/, "").replace(/[^0-9a-fA-F]/g, "").toUpperCase();
+	if (!h) h = "0";
+	h = h.slice(-nib).padStart(nib, "0");        // keep the LOW digits, pad to the width
+	const top = w % 4;                           // 6 bits cannot hold 0xFF — mask the
+	if (top) {                                    // bits that do not exist at this width
+		h = ((parseInt(h[0], 16) & ((1 << top) - 1)).toString(16).toUpperCase()) + h.slice(1);
+	}
+	return h;
+}
+function constBits(p) {
+	const w = constWidth(p);
+	return parseInt(constHex(p), 16).toString(2).padStart(w, "0").slice(-w);
+}
+function constLabel(p) { return constWidth(p) > 1 ? "0x" + constHex(p) : "'" + constBits(p) + "'"; }
+function constShapeW(p) {
+	const n = Math.max(constLabel(p).length, constWidth(p) > 1 ? String(constWidth(p) - 1).length + 4 : 0);
+	return Math.ceil(Math.max(55, Math.round(n * 7) + 22) / GRID) * GRID;
+}
+/* The VHDL literal. Hex only when the width is a whole number of nibbles — x"F4" IS
+   8 bits by definition, so a 6-bit signal rejects it; a binary string always fits the
+   width exactly, which is also what makes the odd widths legal. */
+function constVhdl(p) {
+	const w = constWidth(p);
+	if (w === 1) return "'" + constBits(p) + "'";
+	return (w % 4 === 0) ? `x"${constHex(p)}"` : `"${constBits(p)}"`;
 }
 /* clock-edge mark for flip-flops: triangle, plus a bubble for falling edge */
 function edgeMark(cy, edge) {
@@ -204,6 +251,30 @@ const TYPES = {
               <line x1="4" y1="20" x2="18" y2="20" stroke="var(--out-stroke)" stroke-width="1.6"/>
               <line x1="7" y1="26" x2="15" y2="26" stroke="var(--out-stroke)" stroke-width="1.6"/>
               <text x="11" y="33" text-anchor="middle" font-size="10" fill="var(--out-text)" font-weight="600">GND</text>`
+	},
+	/* Locks whatever it feeds to a fixed value — an OUTPUT pin held at 0x00, a sub-block
+	   input strapped to a mode, a byte of a command table. Deliberately NOT drawn like an
+	   INPUT: a port and a constant read the same on a printout otherwise, and one of them
+	   is a pin on the entity while the other is a wire tied to a rail. */
+	CONST: {
+		label: "CONST", category: "io",
+		defaultParams: { value: "00", width: 8 },
+		paramSchema: [
+			{ key: "value", label: "ค่า (hex)", type: "string", placeholder: "เช่น F4 หรือ 0xF4" },
+			{ key: "width", label: "ความกว้าง (bit)", type: "int", min: 1, max: 32 },
+		],
+		size: p => ({ w: constShapeW(p), h: 44 }),
+		ports: p => { const w = constShapeW(p); return [{ id: "o", dir: "out", dx: w, dy: 22, width: constWidth(p) }]; },
+		shape(p) {
+			const w = constShapeW(p), wide = constWidth(p) > 1;
+			return `<rect class="glow" x="2" y="8" width="${w - 4}" height="28" rx="4"
+                fill="var(--in-fill)" stroke="var(--in-stroke)" stroke-width="1.6"/>
+              <line x1="7" y1="12" x2="7" y2="32" stroke="var(--in-stroke)" stroke-width="1.4"/>
+              <text x="${(w + 5) / 2}" y="${wide ? 21 : 26}" text-anchor="middle" font-size="11"
+                fill="var(--in-text)" font-weight="600">${esc(constLabel(p))}</text>` +
+				(wide ? `<text x="${(w + 5) / 2}" y="32" text-anchor="middle" font-size="8"
+                fill="var(--muted)">(${constWidth(p) - 1}:0)</text>` : ``);
+		}
 	},
 	JUNCTION: {
 		label: "Junction", category: "wire",
@@ -600,8 +671,18 @@ function schPortList(sch) {
 	const used = {};
 	const uq = b => { let n = sanId(b) || "net", i = 1; while (used[n]) n = sanId(b) + "_" + (i++); used[n] = 1; return n; };
 	const out = [];
-	(sch.components || []).filter(c => c.type === "IN").forEach(c => out.push({ id: uq(c.params.name || "in"), name: c.params.name, dir: "in", width: c.params.width || 1 }));
-	(sch.components || []).filter(c => c.type === "OUT").forEach(c => out.push({ id: uq(c.params.name || "out"), name: c.params.name, dir: "out", width: c.params.width || 1 }));
+	/* PIN ORDER FOLLOWS THE DRAWING. The pins used to come out in the order the IN/OUT
+	   blocks happened to be CREATED in — a sequence that is invisible on screen, so a
+	   block ended up with its pins in an order nobody chose (sel0, sel1, sel3 landing
+	   between in7 and in8, sel2 at the very bottom). Sorting by position instead makes
+	   the layout the control: arrange the port blocks on the sub-sheet top to bottom the
+	   way you want them on the symbol, and the symbol follows. Ids are unaffected, so
+	   nothing a parent has wired comes loose — the pins only move. */
+	const byPos = (a, b) => (a.y - b.y) || (a.x - b.x);
+	(sch.components || []).filter(c => c.type === "IN").slice().sort(byPos)
+		.forEach(c => out.push({ cid: c.id, id: uq(c.params.name || "in"), name: c.params.name, dir: "in", width: c.params.width || 1 }));
+	(sch.components || []).filter(c => c.type === "OUT").slice().sort(byPos)
+		.forEach(c => out.push({ cid: c.id, id: uq(c.params.name || "out"), name: c.params.name, dir: "out", width: c.params.width || 1 }));
 	return out;
 }
 function customPorts(cc) {

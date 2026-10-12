@@ -1,5 +1,33 @@
 "use strict";
 
+/* Sheet look: "ise" = white sheet, grey dot grid, blue ink (Xilinx ISE Schematic
+   Capture); "dark" = the studio theme. ISE is the default because that is the drawing
+   students see in the lab and in every ISE screenshot they are handed. */
+const THEMES = {
+	ise: "ISE (พื้นขาว)",
+	dark: "มืด (Studio)",
+};
+let THEME = "ise";
+try { const t = localStorage.getItem("schstudio.theme"); if (t && THEMES[t]) THEME = t; } catch (_) { }
+function applyTheme() {
+	if (!THEMES[THEME]) THEME = "ise";
+	// "dark" is the base palette in :root, so it carries no attribute of its own
+	if (THEME === "dark") document.documentElement.removeAttribute("data-theme");
+	else document.documentElement.setAttribute("data-theme", THEME);
+	document.querySelectorAll(".mi-theme").forEach(b => {
+		const k = b.dataset.theme;
+		b.textContent = (k === THEME ? "✓ " : "   ") + "ธีม: " + THEMES[k];
+	});
+}
+
+/* ---------- in-app manual ---------- */
+function manualOpen() { const v = $("#manualView"); return !!v && !v.hidden; }
+function openManual() { const v = $("#manualView"); if (v) { v.hidden = false; } }
+function closeManual() { const v = $("#manualView"); if (v) v.hidden = true; }
+$("#manualClose")?.addEventListener("click", closeManual);
+// clicking the dark backdrop (not the page itself) closes, like every dialog here
+$("#manualView")?.addEventListener("mousedown", ev => { if (ev.target === ev.currentTarget) closeManual(); });
+
 function setLeftTab(name) {
 	$$(".pane:not(.right) .pane-tabs button").forEach(button => {
 		button.classList.toggle("active", button.dataset.ltab === name);
@@ -148,7 +176,7 @@ function bindActionDispatcher() {
 			}
 			case "relayout": {
 				const sch = activeSch(); if (!sch) return;
-				healLayout(sch, true);       // one-shot, on request, even when locked
+				healLayout(sch, null, true);       // one-shot, on request, even when locked
 				snapshot(); renderAll();
 				toast("จัดสายใหม่ทั้งแผ่นแล้ว (กด Ctrl+Z เพื่อย้อนกลับ)", "ok", 3000);
 				break;
@@ -214,6 +242,16 @@ function bindActionDispatcher() {
 				break;
 			}
 			case "download-vhdl": exportVhdlFile(); break;
+			case "open-manual": openManual(); break;
+			case "theme": {
+				const k = actionElement.dataset.theme;
+				if (!THEMES[k]) break;
+				THEME = k;
+				try { localStorage.setItem("schstudio.theme", THEME); } catch (_) { }
+				applyTheme();
+				render();
+				break;
+			}
 		}
 	});
 }

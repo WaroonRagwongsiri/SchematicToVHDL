@@ -260,3 +260,76 @@ function exportActiveAsCustom() {
 	URL.revokeObjectURL(u);
 	toast(`Exported "${cc.name}" as component file`, "ok");
 }
+
+/* A wire can outlive the PIN it lands on: deleting an IN/OUT inside a sub-sheet shrinks
+   every parent block's port list, and the parent's wire is then attached to a pid that
+   no longer resolves. render() silently skips such a wire (the drawing loses ink with
+   no explanation) while the dead wire is still written to the saved file, and the next
+   healJunctions on that sheet threw a TypeError out of the Delete handler. Sweep them
+   across the WHOLE project and report how many went. */
+/* A SUB-BLOCK'S PIN ID IS THE PORT'S NAME — it has to be, because that name is the
+   formal in the generated port map. So renaming an IN/OUT inside a sheet renames the
+   pins of every instance of that sheet, and the parent's wires, which store the OLD
+   id, are left pointing at a pin that no longer exists. They then stop being drawn
+   (the render skips a wire whose port will not resolve), the pin reads as "not
+   connected", and the generator quietly substitutes '0'. A whole branch of a design
+   dies with no message at all.
+
+   Deleting a port is worse than it looks for the same reason: ids are deduped by
+   POSITION (an IN and an OUT sharing a name become foo / foo_1), so removing one port
+   can renumber another — and a wire then still resolves, to the WRONG pin.
+
+   Both are the same fix: diff the port list by component identity and move the wires. */
+function remapSubBlockPins(schId, before, after) {
+	const now = new Map((after || []).map(p => [p.cid, p.id]));
+	const move = new Map();                       // oldId → newId, only where it changed
+	const dead = new Set();                       // ports that are gone altogether
+	(before || []).forEach(p => {
+		const nid = now.get(p.cid);
+		if (!nid) dead.add(p.id);
+		else if (nid !== p.id) move.set(p.id, nid);
+	});
+	const out = { moved: 0, dropped: 0 };
+	if (!move.size && !dead.size) return out;
+	const type = "SCH:" + schId;
+	const sweep = s => {
+		if (!s || !Array.isArray(s.wires)) return;
+		const inst = new Set((s.components || []).filter(c => c.type === type).map(c => c.id));
+		if (!inst.size) return;
+		/* Wires on a DELETED port must go first. Deleting one port renumbers another
+		   (foo_1 → foo), so a moment later the dead wire's id would resolve again — to a
+		   different pin, sometimes one facing the other way — and the ordinary dead-pin
+		   sweep would then find nothing wrong with it. */
+		if (dead.size) {
+			const keep = s.wires.filter(w => ![w.from, w.to].some(ep => inst.has(ep.cid) && dead.has(ep.pid)));
+			out.dropped += s.wires.length - keep.length;
+			s.wires = keep;
+		}
+		// each endpoint is rewritten at most once, off the ORIGINAL map, so even a rename
+		// that swaps two names round lands correctly
+		s.wires.forEach(w => {
+			[w.from, w.to].forEach(ep => {
+				if (inst.has(ep.cid) && move.has(ep.pid)) { ep.pid = move.get(ep.pid); out.moved++; }
+			});
+		});
+	};
+	Object.values(state.project.schematics).forEach(sweep);
+	Object.values(state.project.customs || {}).forEach(cc => { if (cc.schematic) sweep(cc.schematic); });
+	return out;
+}
+function pruneDeadPinWires() {
+	let n = 0;
+	const sweep = s => {
+		if (!s || !Array.isArray(s.wires)) return;
+		const live = w => {
+			const a = comp(w.from.cid, s), b = comp(w.to.cid, s);
+			return a && b && portPos(a, w.from.pid) && portPos(b, w.to.pid);
+		};
+		const keep = s.wires.filter(live);
+		n += s.wires.length - keep.length;
+		s.wires = keep;
+	};
+	Object.values(state.project.schematics).forEach(sweep);
+	Object.values(state.project.customs || {}).forEach(cc => { if (cc.schematic) sweep(cc.schematic); });
+	return n;
+}

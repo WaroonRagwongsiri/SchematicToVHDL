@@ -181,9 +181,9 @@ function render() {
 
 		if (w.name) {
 			// label follows the actual route (sits on the adjustable segment);
-			// bus wires show the range like OP3[7:0] (same notation as I/O markers)
+			// bus wires show the range like OP3(7:0) (same notation as I/O markers)
 			let labText = w.name;
-			if (isBus) labText = `${w.name}[${(wWidth.get(w.id) || 1) - 1}:0]`;
+			if (isBus) labText = `${w.name}(${(wWidth.get(w.id) || 1) - 1}:0)`;
 			let lx, ly;
 			if (r.kind === "poly") { const m = r.pts[Math.floor(r.pts.length / 2)]; lx = m.x; ly = m.y - 6; }
 			else {
@@ -288,7 +288,7 @@ function render() {
 				// label shows the REAL net width (from the source if driven)
 				const jw = jWires[0];
 				const eff = jw ? (wWidth.get(jw.id) || c.params.busWidth) : c.params.busWidth;
-				const text = sanId(c.params.busName) + "[" + (eff - 1) + ":0]";
+				const text = sanId(c.params.busName) + "(" + (eff - 1) + ":0)";
 				// place the label on the clear side of the host wire: above a
 				// horizontal run, beside a vertical one (never through the stroke)
 				let horiz = true, sign = 1;
@@ -319,11 +319,14 @@ function render() {
 			}
 		}
 		body.addEventListener("mousedown", ev => startDrag(ev, c));
-		if (c.type === "IN" || c.type === "OUT") {
-			body.addEventListener("dblclick", ev => openInspectorFor(c));
-		} else {
-			body.addEventListener("dblclick", ev => openInspectorFor(c));
-		}
+		/* Double-click means LOOK INSIDE. On a block that has an inside — a sub-schematic,
+		   or a custom component built in the wizard — that is the drawing it stands for;
+		   on everything else there is nothing to open, so it falls back to the inspector,
+		   which is what this gesture always did. */
+		body.addEventListener("dblclick", ev => {
+			ev.preventDefault(); ev.stopPropagation();
+			if (!openInside(c)) openInspectorFor(c);
+		});
 		body.addEventListener("contextmenu", ev => {
 			ev.preventDefault();
 			openInspectorFor(c);
@@ -443,23 +446,71 @@ function zoomBy(f) {
 	render();
 }
 function zoom100() { state.view = { x: 0, y: 0, k: 1 }; render(); }
-function zoomFit() {
-	const sch = activeSch(); if (!sch || !sch.components.length) { zoom100(); return; }
-	let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
-	sch.components.forEach(c => {
-		const sz = getSize(c);
-		minX = Math.min(minX, c.x); minY = Math.min(minY, c.y);
-		maxX = Math.max(maxX, c.x + sz.w); maxY = Math.max(maxY, c.y + sz.h);
-	});
-	const r = canvas.getBoundingClientRect();
-	const pad = 80;
-	const kx = (r.width - pad * 2) / (maxX - minX);
-	const ky = (r.height - pad * 2) / (maxY - minY);
-	const k = clamp(Math.min(kx, ky), 0.3, 2);
-	state.view.k = k;
-	state.view.x = pad - minX * k + (r.width - pad * 2 - (maxX - minX) * k) / 2;
-	state.view.y = pad - minY * k + (r.height - pad * 2 - (maxY - minY) * k) / 2;
+/* The INK of a sheet, not just its blocks: a hand-drawn wire can run well outside the
+   components it joins, and a frame measured from blocks alone leaves it off-screen. */
+function sheetBounds(sch) {
+	let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+	const put = (x, y) => {
+		if (!isFinite(x) || !isFinite(y)) return;
+		if (x < minX) minX = x; if (y < minY) minY = y; if (x > maxX) maxX = x; if (y > maxY) maxY = y;
+	};
+	(sch.components || []).forEach(c => { const s = getSize(c); put(c.x, c.y); put(c.x + s.w, c.y + s.h); });
+	(sch.wires || []).forEach(w => { (w.pts || []).concat(w.autoPts || []).forEach(p => { if (p) put(p.x, p.y); }); });
+	return isFinite(minX) ? { minX, minY, maxX, maxY } : null;
+}
+/* The view that frames `b` inside a vw×vh viewport — kept as pure arithmetic so it can
+   be checked without a browser, and so the zero cases are handled in ONE place: a flat
+   extent (a single block, a dead-straight wire) divides by zero, and the NaN that puts
+   in state.view blanks the canvas with no way back short of a reload. */
+function fitView(b, vw, vh, pad) {
+	pad = (pad == null) ? 80 : pad;
+	const iw = Math.max(1, vw - pad * 2), ih = Math.max(1, vh - pad * 2);
+	const cw = Math.max(1, b.maxX - b.minX), ch = Math.max(1, b.maxY - b.minY);
+	const k = clamp(Math.min(iw / cw, ih / ch), 0.3, 2);
+	return { k, x: pad - b.minX * k + (iw - cw * k) / 2, y: pad - b.minY * k + (ih - ch * k) / 2 };
+}
+/* the canvas is not always measurable — hidden behind the manual, or simply not laid
+   out yet at boot — and a fit computed against a 0-wide box is nonsense */
+function viewportSize() {
+	const r = (typeof canvas !== "undefined" && canvas && canvas.getBoundingClientRect)
+		? canvas.getBoundingClientRect() : null;
+	// typeof, not +r.width: this runs on every sheet you open, so it must not be able
+	// to throw on whatever the rect turns out to be
+	const w = r ? r.width : null, h = r ? r.height : null;
+	return (typeof w === "number" && typeof h === "number" && isFinite(w) && isFinite(h) && w > 0 && h > 0)
+		? { w, h } : null;
+}
+function applyFit() {
+	const sch = activeSch(); if (!sch) return false;
+	const b = sheetBounds(sch);
+	if (!b) { zoom100(); return true; }            // nothing drawn yet — plain 1:1
+	const vp = viewportSize(); if (!vp) return false;
+	state.view = fitView(b, vp.w, vp.h);
 	render();
+	return true;
+}
+function zoomFit() { _fitFor = state.activeId; applyFit(); }
+/* ENTERING A SHEET FRAMES IT (user: "พอเข้าไฟล์ sch ให้ zoom-fit เองเลย").
+   state.view is a SINGLE global pan/zoom, so a sheet you open inherits the window of
+   whatever you were looking at before it — on a DIFFERENT sheet that is an arbitrary
+   spot, usually empty space, which is why opening a sheet could look like it had
+   nothing on it. Nothing is lost by re-framing, because there was never a per-sheet
+   view to keep. Fires only when the active sheet actually CHANGES, so it never fights
+   a zoom set while working; `force` covers a wholesale change (file load, project
+   switch) where the id can be the same while the content is not. */
+let _fitFor = null;              // the sheet the view was last framed for
+function autoFitSheet(force, tries) {
+	const id = state.activeId;
+	if (!id || (!force && id === _fitFor)) return false;
+	_fitFor = id;
+	if (applyFit()) return true;
+	/* not measurable yet — boot, or a canvas behind the manual. Try again next frame,
+	   with a cap: a canvas that is never shown must not spin a frame loop forever. */
+	_fitFor = null;
+	tries = tries || 0;
+	if (tries < 20 && typeof requestAnimationFrame === "function")
+		requestAnimationFrame(() => autoFitSheet(force, tries + 1));
+	return false;
 }
 function updateStatus() {
 	updateMouseStat();   // keep the zoom % current after wheel/button zoom

@@ -249,6 +249,9 @@ function portSideH(c, pid) {
    exits vertically out of the top/bottom of the square, and vice-versa).
    Returns true if the attached wire should be horizontal at the junction. */
 function junctionExitH(j, self, sch, idx) {
+	// a stamped axis (see stampJunctionAxis) freezes which way this dot exits —
+	// deleting a sibling branch must not re-elbow a dot that already drew a picture
+	if (j.params && j.params.axis) return j.params.axis === "v";
 	const jp = portPos(j, "j");
 	let horiz = false, vert = false;
 	const scan = w => {
@@ -269,6 +272,36 @@ function junctionExitH(j, self, sch, idx) {
 	if (horiz && !vert) return false;
 	if (vert && !horiz) return true;
 	return false;   // ambiguous → exit vertical (down/up out of the square)
+}
+/* Give every dot that has no stamped host axis the one it is behaving as RIGHT NOW,
+   so the picture is unchanged but stops depending on which branches exist. A dot with
+   no host wire at all (a tie node, a free endpoint) is left unstamped on purpose —
+   there is no host axis to record, and its branches derive as before. */
+function stampJunctionAxis(sch) {
+	if (!sch || !sch.components) return;
+	sch.components.forEach(j => {
+		if (j.type !== "JUNCTION") return;
+		if (!j.params) j.params = {};              // a dot with no params object at all still needs one
+		if (j.params.axis) return;
+		const jp = portPos(j, "j");
+		if (!jp) return;
+		let horiz = false, vert = false;
+		(sch.wires || []).forEach(w => {
+			if (w.from.cid !== j.id && w.to.cid !== j.id) return;
+			const oc = comp(w.from.cid === j.id ? w.to.cid : w.from.cid, sch);
+			const op = oc && portPos(oc, w.from.cid === j.id ? w.to.pid : w.from.pid);
+			if (!op) return;
+			if (Math.abs(op.y - jp.y) < 0.5) horiz = true;
+			if (Math.abs(op.x - jp.x) < 0.5) vert = true;
+		});
+		// EVERY dot gets an axis, including the ambiguous ones (a fan-out dot with both a
+		// horizontal and a vertical neighbour, a tie node, a free end). Leaving those blank
+		// meant they kept deriving from their siblings — the very thing that made deleting
+		// one branch re-elbow the others — and that is the commonest dot shape of all.
+		// "h" reproduces the old ambiguous fallback (junctionExitH returned false), so
+		// stamping it changes nothing on screen; it only freezes what is already drawn.
+		j.params.axis = (vert && !horiz) ? "v" : "h";
+	});
 }
 /* a Bus Tap / Ripper bus-side pin ("d") accepts the bus from ANY direction, like a
    junction — the wire approaches along whichever axis it mostly runs, so the thick
@@ -638,6 +671,25 @@ function netWires(sch, w0) {
 	}
 	return net;
 }
+/* Width of a net that has NO driver yet. Building a bus OUT OF single bits starts
+   exactly there: you drag a run off a 16-bit OUTPUT pin, drop the end in open space,
+   and every bit arrives later through a tap — until the first tap lands nothing is
+   driving it, so the driver walk above finds nothing. Take the widest real port the
+   net touches instead, which is that OUTPUT. A Bus Tap's own bus pin is skipped: its
+   width is only a "this is a bus pin" drawing marker, not a claim about the net. */
+function netPortWidth(sch, w0) {
+	let width = 1;
+	netWires(sch, w0).forEach(id => {
+		const w = sch.wires.find(x => x.id === id); if (!w) return;
+		[w.from, w.to].forEach(ep => {
+			const c = comp(ep.cid, sch);
+			if (!c || c.type === "JUNCTION" || c.type === "BUSTAP") return;
+			const p = getPort(c, ep.pid);
+			if (p) width = Math.max(width, p.width || 1);
+		});
+	});
+	return width;
+}
 /* all wires belonging to the net driven by (cid,pid), following junctions */
 function netWiresFrom(sch, cid, pid) {
 	const res = [];
@@ -663,11 +715,12 @@ function netWiresFrom(sch, cid, pid) {
    junction on a horizontal wire, or the side for a vertical one. Keeps the dot
    on the host line; only runs when the junction is a clean 2-host + branches
    point (never disturbs a deliberate corner). */
-function alignJunctionBranch(sch) {
+function alignJunctionBranch(sch, scope) {
 	sch = sch || activeSch();
 	sch.components.filter(c => c.type === "JUNCTION").forEach(j => {
 		if (state.pendingWire && state.pendingWire.cid === j.id) return;
 		if (j.params && j.params.fixed) return;        // user parked this dot — hands off
+		if (!junctionInScope(sch, j, scope)) return;   // untouched net — leave it alone
 		const jp = portPos(j, "j");
 		const legs = sch.wires
 			.filter(w => w.from.cid === j.id || w.to.cid === j.id)
@@ -733,7 +786,7 @@ function firstSegFromJunction(j, w, sch) {
    straight up), so 2+ wires overlap along a shared segment and the visible split
    happens far from the square. Slide the junction to the nearest turn of an
    overlapping group until no two wires leave it the same way. */
-function reflowJunctions(sch) {
+function reflowJunctions(sch, scope) {
 	sch = sch || activeSch();
 	let guard = 0, moved = true;
 	while (moved && guard++ < 40) {
@@ -741,6 +794,7 @@ function reflowJunctions(sch) {
 		for (const j of sch.components.filter(c => c.type === "JUNCTION")) {
 			if (state.pendingWire && state.pendingWire.cid === j.id) continue;
 			if (j.params && j.params.fixed) continue;       // user parked this dot — hands off
+			if (!junctionInScope(sch, j, scope)) continue;  // untouched net — leave it alone
 			const wires = sch.wires.filter(w => w.from.cid === j.id || w.to.cid === j.id);
 			if (wires.length < 3) continue;                 // only genuine fan-out points
 			const jp = portPos(j, "j");
@@ -791,7 +845,7 @@ function reflowJunctions(sch) {
    s-route middle lands on another net's segment, nudge it to the nearest FREE grid
    column/row. Runs after wiring edits/moves; a persisted w.mx/w.my is updated so the
    choice sticks. */
-function separateWireOverlaps(sch) {
+function separateWireOverlaps(sch, scope) {
 	sch = sch || activeSch();
 	const key = new Map();     // wire id → net identity (driver port)
 	sch.wires.forEach(w => {
@@ -824,6 +878,8 @@ function separateWireOverlaps(sch) {
 	while (guard++ < 4) {
 		let moved = false;
 		for (const A of all) {
+			// only wires this edit touched may be MOVED; every wire is still an obstacle
+			if (scope && !scope.has(A.w.id)) continue;
 			const others = all.filter(B => B.w !== A.w && key.get(B.w.id) !== key.get(A.w.id));
 			// a JUNCTION BRANCH drop ("l" leaving a junction — a bent leg only, never a
 			// straight "v" whose both ends are pinned): its vertical leg sits AT the
@@ -936,13 +992,14 @@ function separateWireOverlaps(sch) {
    sink wired early keeps its tap far up the trunk while a later branch runs the whole
    way down beside it — two long parallel same-net runs and a dot stranded "ข้างบน"
    instead of at the split. Re-tap any branch the net can serve materially closer. */
-function retapBranches(sch) {
+function retapBranches(sch, scope) {
 	sch = sch || activeSch();
 	if (state.pendingWire) return;
 	for (let pass = 0; pass < 3; pass++) {
 		let moved = false;
 		for (const w of [...sch.wires]) {
 			if (!sch.wires.includes(w)) continue;
+			if (scope && !scope.has(w.id)) continue;           // untouched branch — leave it
 			const j = comp(w.from.cid, sch), sink = comp(w.to.cid, sch);
 			if (!j || j.type !== "JUNCTION") continue;            // only a branch off a dot
 			if (!sink || sink.type === "JUNCTION") continue;      // …that ends at a real pin
@@ -968,7 +1025,7 @@ function retapBranches(sch) {
 				return Math.hypot(cp.x - best.at.x, cp.y - best.at.y) <= 1.5 * GRID;
 			});
 			if (!nj) {
-				nj = { id: uid("c"), type: "JUNCTION", x: best.at.x - 6, y: best.at.y - 6, params: {} };
+				nj = { id: uid("c"), type: "JUNCTION", x: best.at.x - 6, y: best.at.y - 6, params: { axis: best.at.seg } };
 				sch.components.push(nj);
 				splitWireThroughJunction(best.w, nj, sch);
 			}
@@ -1031,6 +1088,59 @@ function routePoints(r) {
 	});
 	return pts;
 }
+/* The corner list a wire is drawn through RIGHT NOW (pins included). */
+function drawnPoints(sch, w) {
+	const A = comp(w.from.cid, sch), B = comp(w.to.cid, sch);
+	if (!A || !B) return null;
+	// a pin can vanish while its component lives (an IN/OUT deleted inside a sub-sheet
+	// shrinks the parent block's port list) — portPos then returns null, and passing that
+	// to wireRoute threw a TypeError straight out of the Delete key handler
+	const p1 = portPos(A, w.from.pid), p2 = portPos(B, w.to.pid);
+	if (!p1 || !p2) return null;
+	return routePoints(wireRoute(w, p1, p2, wireOpts(w, sch)));
+}
+/* Drop repeated and collinear points so two descriptions of the SAME picture
+   (e.g. one route vs two routes joined at a dot) compare equal. */
+function prunePoly(pts) {
+	const out = pts.map(p => ({ x: Math.round(p.x), y: Math.round(p.y) }));
+	// Repeat to a fixed point. One pass is NOT enough: joining two routes at a dot
+	// leaves an out-and-back spur (…385,418 → 396,418 → 385,418…). Removing the spur
+	// tip creates a duplicate pair, and removing THAT can leave its neighbours
+	// collinear — a single forward pass stops after the first of those and the polyline
+	// still carries a phantom bend, which then makes keepPicture fail to reproduce it.
+	for (let again = true; again;) {
+		again = false;
+		for (let i = 0; i < out.length - 1; i++) {
+			if (out[i].x === out[i + 1].x && out[i].y === out[i + 1].y) { out.splice(i + 1, 1); again = true; i--; }
+		}
+		for (let i = 1; i < out.length - 1; i++) {
+			const A = out[i - 1], B = out[i], C = out[i + 1];
+			if ((A.x === B.x && B.x === C.x) || (A.y === B.y && B.y === C.y)) { out.splice(i, 1); again = true; i--; }
+		}
+	}
+	return out;
+}
+const polyKey = pts => prunePoly(pts).map(p => p.x + "," + p.y).join(" ");
+/* Make w keep drawing the polyline `want` (a polyKey). Used when a wire is REPLACED
+   by another object (junction merge): the user deleted one branch, so nothing else on
+   the sheet is allowed to jump to a fresh auto-route. Pins the corners only when the
+   natural route doesn't already draw them, so a merge doesn't needlessly turn an
+   auto-routed wire into a hand-routed one — and backs out if pinning doesn't help. */
+function keepPicture(sch, w, want) {
+	if (!want) return;
+	const now = drawnPoints(sch, w);
+	if (now && polyKey(now) === want) return;
+	const saved = w.pts, savedAuto = w.autoPts;
+	const pts = want.split(" ").map(s => { const v = s.split(","); return { x: +v[0], y: +v[1] }; });
+	if (pts.length < 2) return;
+	w.pts = pts.slice(1, -1);
+	delete w.autoPts;
+	const after = drawnPoints(sch, w);
+	if (!after || polyKey(after) !== want) {                 // couldn't reproduce it — leave as found
+		if (saved) w.pts = saved; else delete w.pts;
+		if (savedAuto) w.autoPts = savedAuto;
+	}
+}
 /* Move segment i of a route perpendicular to itself to `val`, keeping BOTH pins
    exactly where they are (a segment touching a pin grows a new leg instead of
    dragging the pin along). Returns the interior waypoints for w.pts. */
@@ -1048,11 +1158,12 @@ function segmentMovePts(base, i, t, val) {
    leg a z/s route already has (cheap, keeps the shape), else by moving the blocked run
    to a clear track with the SAME mechanism a manual drag uses (segmentMovePts), stored
    in w.autoPts so it never masquerades as a hand-drawn route. */
-function avoidBodies(sch) {
+function avoidBodies(sch, scope) {
 	sch = sch || activeSch();
 	const boxes = symbolBoxes(sch);
 	if (boxes.length < 2) return;
 	for (const w of sch.wires) {
+		if (scope && !scope.has(w.id)) continue;      // untouched wire — keep its route as drawn
 		if (w.pts && w.pts.length) continue;          // hand-routed → the user's call, never touch
 		delete w.autoPts;                            // always recompute from the clean auto route
 		const a = comp(w.from.cid, sch), b = comp(w.to.cid, sch);
@@ -1165,15 +1276,34 @@ function lockedNudge() {
    screen waiting for the "next edit". Locked (per-sheet, or the global debug toggle)
    skips the rearranging passes and only heals structurally, unless `force` (the
    one-shot ↻ Relayout action) overrides the lock. */
-function healLayout(sch, force) {
+function healLayout(sch, scope, force) {
 	sch = sch || activeSch();
 	if (!force && (layoutLocked(sch) || !AUTO_ARRANGE)) { healJunctions(sch); return; }
-	retapBranches(sch);
-	alignJunctionBranch(sch);
-	reflowJunctions(sch);
-	separateWireOverlaps(sch);
+	// Auto detours are dropped FIRST so every pass sees the plain auto routes —
+	// that is what keeps the whole pipeline idempotent.
+	sch.wires.forEach(w => { if (!scope || scope.has(w.id)) delete w.autoPts; });
+	retapBranches(sch, scope);
+	alignJunctionBranch(sch, scope);
+	reflowJunctions(sch, scope);
+	separateWireOverlaps(sch, scope);
 	healJunctions(sch);
-	avoidBodies(sch);
+	avoidBodies(sch, scope);
+}
+/* the wires an edit touches: those given, plus every wire attached to the given
+   components (moving a symbol re-routes exactly the wires that hang off it) */
+function scopeOf(sch, { wires = [], comps = [] } = {}) {
+	const s = new Set();
+	wires.forEach(w => { if (w) s.add(w.id || w); });
+	if (comps.length) {
+		const ids = new Set(comps.map(c => c && c.id).filter(Boolean));
+		sch.wires.forEach(w => { if (ids.has(w.from.cid) || ids.has(w.to.cid)) s.add(w.id); });
+	}
+	return s;
+}
+/* a junction may be moved only when one of ITS wires is in scope */
+function junctionInScope(sch, j, scope) {
+	if (!scope) return true;
+	return sch.wires.some(x => (x.from.cid === j.id || x.to.cid === j.id) && scope.has(x.id));
 }
 
 /* ISE behaviour: a port drives ONE wire; further connections branch off the
@@ -1301,6 +1431,34 @@ function normalizePortFanout(sch) {
 		}
 	}
 }
+/* Point every wire of this net AWAY from `rootCid`.
+   A net tied together from input pins has no meaningful direction: its wire records
+   just keep whichever way they happened to be drawn. The moment a driver lands on it,
+   a wire still pointing INTO the driver's junction reads as a second incoming wire —
+   the app's own definition of two drivers shorted together — and the signal never
+   reaches the pins. Walk out from the source and turn the wrong ones around.
+   Only ever called on a net that had NO driver, so no real source can be reversed. */
+function orientNetFrom(sch, rootCid) {
+	const seenC = new Set(), seenW = new Set(), stack = [rootCid];
+	while (stack.length) {
+		const at = stack.pop();
+		if (seenC.has(at)) continue;
+		seenC.add(at);
+		sch.wires.forEach(w => {
+			if (seenW.has(w.id)) return;
+			let far;
+			if (w.from.cid === at) far = w.to;
+			else if (w.to.cid === at) {
+				const f = w.from; w.from = w.to; w.to = f;      // flip
+				if (w.pts && w.pts.length) w.pts.reverse();      // waypoints run source -> sink
+				far = w.to;
+			} else return;
+			seenW.add(w.id);
+			const fc = comp(far.cid, sch);
+			if (fc && fc.type === "JUNCTION") stack.push(far.cid);
+		});
+	}
+}
 function tapWire(w, point) {
 	// no wire being drawn yet → START a branch from this wire (junction deferred
 	// until the target is chosen, so it lands at the optimal spot). Also used to
@@ -1310,21 +1468,28 @@ function tapWire(w, point) {
 		return;
 	}
 	// completing a wire being drawn from a port/junction ONTO this wire →
-	// block outputs (would make two drivers on one net)
+	// block a SECOND driver landing on a net that already has one
 	const pc = comp(state.pendingWire.cid);
+	let feeds = null;
 	if (pc) {
 		const pp = getPort(pc, state.pendingWire.pid);
 		const drives = pc.type === "JUNCTION"
 			? activeSch().wires.some(x => x.to.cid === pc.id)
 			: (pp && pp.dir === "out");
-		if (drives) {
+		// Two drivers on ONE net is the thing to prevent, not an output as such.
+		// A net with no driver yet (input pins tied together, waiting for a source) is
+		// exactly what an output is meant to be tapped onto: that is how one signal feeds
+		// them all. Refusing it left the user with a tied pair and no way to drive it.
+		if (drives && netHasDriver(activeSch(), w)) {
 			toast("แตะ (tap) สายด้วย output ไม่ได้ — จะทำให้มี driver ชนกันบน net เดียว", "warn");
 			return;
 		}
+		if (drives) feeds = pc;
 	}
 	const { j } = createJunctionOnWire(w, point);
 	splitWireThroughJunction(w, j);
 	onPortClick(j, { id: "j", dir: "out" });   // complete the pending wire to the new junction
+	if (feeds) { orientNetFrom(activeSch(), feeds.id); render(); }
 }
 
 /* =========================================================================

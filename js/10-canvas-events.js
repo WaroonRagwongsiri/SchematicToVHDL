@@ -1,5 +1,20 @@
 "use strict";
 
+/* LOOK INSIDE a block that has one: a sub-schematic opens its sheet, a custom
+   component opens the wizard it was built in. */
+function openInside(c) {
+	if (!c) return false;
+	if (String(c.type).startsWith("SCH:")) {
+		const sid = c.type.slice(4);
+		if (state.project.schematics[sid]) { state.drag = null; openSchTab(sid); return true; }
+	}
+	if (String(c.type).startsWith("CUSTOM:")) {
+		const nm = c.type.slice(7);
+		if ((state.project.customs || {})[nm]) { state.drag = null; openWizard(nm); return true; }
+	}
+	return false;
+}
+let _lastPress = { id: null, t: 0 };
 function startDrag(ev, c) {
 	if (ev.button !== 0) return;          // only respond to left mouse button
 	ev.stopPropagation();
@@ -9,6 +24,20 @@ function startDrag(ev, c) {
 		if (state.tool === "wire" && c.type === "JUNCTION") onPortClick(c, { id: "j", dir: "out" });
 		return;
 	}
+	/* DOUBLE-CLICK IS RECOGNISED HERE, from two presses — not from a dblclick listener
+	   on the symbol. This handler ends in render(), which rebuilds every node, so the
+	   browser's two clicks land on DIFFERENT elements and it fires dblclick at their
+	   common ancestor instead; a listener on the symbol never runs. (A synthetic
+	   dblclick dispatched straight at the element does run it, which is exactly how
+	   that hid — a real double-click driven through the browser's input pipeline is
+	   what proved it.) Only a block that HAS an inside is intercepted; everything else
+	   drags and selects exactly as before. */
+	const _now = (typeof performance !== "undefined" && performance.now) ? performance.now() : 0;
+	if (_lastPress.id === c.id && _now - _lastPress.t < 400 && openInside(c)) {
+		_lastPress = { id: null, t: 0 };
+		return;
+	}
+	_lastPress = { id: c.id, t: _now };
 	let prevMulti = null;
 	if (ev.shiftKey) {
 		if (state.selection.has(c.id)) {
@@ -150,13 +179,10 @@ window.addEventListener("mouseup", ev => {
 			// never aimed at, and freezing those would silently kill auto-layout there.
 			if (anchor && anchor.type === "JUNCTION") (anchor.params || (anchor.params = {})).fixed = true;
 			if (draggedJunction) { weldTouchingEnds(); healJunctions(); }
-			// a Bus Tap / Bus Ripper dragged onto a bus snaps on (or off, when dragged
-			// clear) — so you can position it and let it grab the bus, no manual wire
-			movedComps.forEach(c => { if (busInPin(c)) syncBusAttachment(c); });
 			// moving a component/junction reroutes wires — re-slide branch junctions so
 			// the connection square stays exactly where the wires diverge (not left
 			// behind, and not stranded below a long shared stub of overlapping branches)
-			healLayout();
+			healLayout(activeSch(), scopeOf(activeSch(), { comps: movedComps }));
 			snapshot();
 		} else {
 			state.drag = null;
@@ -301,10 +327,17 @@ let _nudgeHealTimer = null;
 function flushNudgeHeal() {
 	if (!_nudgeHealTimer) return;
 	clearTimeout(_nudgeHealTimer); _nudgeHealTimer = null;
-	healLayout(); snapshot();
+	const sch = activeSch();
+	const selComps = Array.from(state.selection).map(id => comp(id)).filter(Boolean);
+	healLayout(sch, scopeOf(sch, { comps: selComps }));
+	snapshot();
 }
 window.addEventListener("keydown", ev => {
 	if (document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
+	if (manualOpen()) {
+		if (ev.key === "Escape") { closeManual(); ev.preventDefault(); }
+		return;
+	}
 	if (_nudgeHealTimer && !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(ev.key)) flushNudgeHeal();
 	// use ev.code (keyboard-layout independent) AND ev.key (for fallback) so Thai
 	// and other non-Latin layouts still respond to Ctrl+C / Ctrl+V etc.
@@ -407,10 +440,7 @@ canvas.addEventListener("drop", ev => {
 	const t = state.dragType || (ev.dataTransfer && ev.dataTransfer.getData("text/plain"));
 	if (t) {
 		const m = svgPoint(ev);
-		const id = addComp(t, m.x - 20, m.y - 15);
-		const nc = id && comp(id);
-		if (nc && busInPin(nc) && attachBusPinToWire(nc))
-			toast("เกาะสายบัสให้อัตโนมัติแล้ว — ปรับ slice ได้ใน Inspector", "ok", 2600);
+		addComp(t, m.x - 20, m.y - 15);
 	}
 	state.dragType = null;
 });

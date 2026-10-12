@@ -47,6 +47,26 @@ const VHDL_RESERVED = new Set(
 	).split(" ")
 );
 
+/* Filename for anything the browser downloads. Every export lands in the same
+   Downloads folder, so each one is stamped with the moment it was made — a second
+   export never becomes "top (1).vhd". The stem is then stripped to letters and digits
+   only: no spaces, no punctuation, nothing a Vivado tcl path can trip over, and Thai
+   names (which have no ASCII form) fall back to the given default. */
+const _dlIssued = new Set();
+function dlName(base, ext, fallback) {
+	const d = new Date(), z = n => String(n).padStart(2, "0");
+	const ts = "" + d.getFullYear() + z(d.getMonth() + 1) + z(d.getDate())
+		+ z(d.getHours()) + z(d.getMinutes()) + z(d.getSeconds());
+	const stem = String(base == null ? "" : base).replace(/[^A-Za-z0-9]/g, "") || fallback || "schematic";
+	// the stamp only resolves to the second, and a double-click on Export fires twice
+	// inside one — at which point the browser itself appends " (1)", a space and two
+	// brackets, exactly what this is here to avoid. Bump a digit instead.
+	let n = ts + stem + ext, k = 1;
+	while (_dlIssued.has(n)) n = ts + stem + (++k) + ext;
+	_dlIssued.add(n);
+	return n;
+}
+
 const sanId = value => {
 	let result = (value || "")
 		.trim()

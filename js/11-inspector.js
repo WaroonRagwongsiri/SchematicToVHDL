@@ -169,17 +169,43 @@ function renderInspector() {
 					// A Bus Tap's bit only means something against the bus it sits on: bit 5 on
 					// a 2-bit bus is not a number the user can have. Clamp to the live width
 					// (only when it is actually attached — a loose tap may be set freely).
-					if (c.type === "BUSTAP" && k === "bit") {
+					if (c.type === "BUSTAP" && (k === "bit" || k === "width")) {
 						const dw = sch.wires.find(x => x.to.cid === c.id && x.to.pid === "d");
 						const bw = dw ? netWidth(dw, sch) : 0;
-						if (bw > 1 && v > bw - 1) {
-							toast(`บัสเส้นนี้กว้าง ${bw} bit (${bw - 1}:0) — เลือกบิต ${v} ไม่ได้`, "warn", 3200);
-							v = bw - 1;
+						if (k === "width") {
+							if (v < 1) v = 1;
+							const b0 = c.params.bit ?? 0;
+							if (bw > 1 && b0 + v > bw) {
+								toast(`บัสเส้นนี้กว้าง ${bw} bit (${bw - 1}:0) — ช่วงบิตเกินขอบเขต`, "warn", 3200);
+								v = Math.max(1, bw - b0);
+							}
+						} else {
+							if (v > bw - 1 && bw > 1) {
+								toast(`บัสเส้นนี้กว้าง ${bw} bit (${bw - 1}:0) — เลือกบิต ${v} ไม่ได้`, "warn", 3200);
+								v = bw - 1;
+							}
+							if (v < 0) v = 0;
 						}
-						if (v < 0) v = 0;
 					}
+					// a CONST shows back exactly what it will drive: "0xf4" → F4, and a value
+					// too big for the width is masked rather than silently truncated elsewhere
+					if (c.type === "CONST" && (k === "value" || k === "width")) {
+						const merged = Object.assign({}, c.params, { [k]: v });
+						if (k === "value") v = constHex(merged);
+						const shown = constHex(merged);
+						if (k === "value" && String(e.value).trim().replace(/^0[xX]/, "").toUpperCase() !== shown)
+							toast(`ค่าคงที่ ${constWidth(merged)} bit → 0x${shown}`, "warn", 2600);
+						if (k === "width") c.params.value = shown;
+					}
+					// renaming an IN/OUT renames this sheet's SUB-BLOCK PIN too — take the
+					// parents' wires with it instead of leaving them on a dead pin
+					const portsBefore = (k === "name" && (c.type === "IN" || c.type === "OUT")) ? schPortList(sch) : null;
 					c.params = c.params || {};
 					c.params[k] = v;
+					if (portsBefore) {
+						const moved = remapSubBlockPins(sch.id, portsBefore, schPortList(sch)).moved;
+						if (moved) toast(`ย้ายสายในแผ่นที่เรียกใช้วงจรนี้ตามชื่อขาใหม่แล้ว ${moved} เส้น`, "ok", 3600);
+					}
 					// ports may have changed (count/width): drop wires to vanished pins
 					sch.wires = sch.wires.filter(w => {
 						const a = comp(w.from.cid), b = comp(w.to.cid);

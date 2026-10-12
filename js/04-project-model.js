@@ -141,12 +141,19 @@ function healJunctions(sch) {
 			} else if (ins.length === 1 && outs.length === 1) {
 				const a = ins[0], b = outs[0];
 				const jp = portPos(j, "j");
+				// The two runs are on screen RIGHT NOW as one polyline through the dot.
+				// Capture it BEFORE the merge: deleting one branch of a fan-out leaves this
+				// pass-through, and letting the merged wire pick a fresh auto-route is what
+				// made the rest of the drawing jump around on every delete.
+				const pa = drawnPoints(sch, a), pb = drawnPoints(sch, b);
+				const want = (pa && pb) ? polyKey([...pa, ...pb]) : null;
 				sch.components = sch.components.filter(c => c !== j);
 				sch.wires = sch.wires.filter(w => w !== a && w !== b);
 				const merged = { id: uid("w"), from: a.from, to: b.to, name: a.name || b.name || "" };
 				// preserve manual waypoints through the removed junction point
 				if (a.pts || b.pts) merged.pts = [...(a.pts || []), { x: jp.x, y: jp.y }, ...(b.pts || [])];
 				sch.wires.push(merged);
+				keepPicture(sch, merged, want);
 				changed = true;
 			} else {
 				// ISE has ONE dot per branch point — never two a grid apart joined by a
@@ -234,17 +241,88 @@ function netWidth(w, sch, visited) {
 		const up = sch.wires.find(x => x.to.cid === src.id);
 		if (up) return netWidth(up, sch, visited);
 		if (src.params && src.params.busWidth) return src.params.busWidth;  // floating bus def
-		return 1;
+		return netPortWidth(sch, w);   // no driver yet — widest real port the net touches
 	}
 	const fp = getPort(src, w.from.pid);
 	return fp ? (fp.width || 1) : 1;
 }
 /* Ensure a schematic name is unique in the project (excluding one id) */
-function uniqueSchName(base, excludeId) {
+function uniqueSchName(base, excludeId, proj) {
+	const P = proj || state.project;
 	let nm = sanId(base) || "sch";
-	const taken = () => Object.keys(state.project.schematics)
-		.some(id => id !== excludeId && state.project.schematics[id].name === nm);
+	const taken = () => Object.keys(P.schematics)
+		.some(id => id !== excludeId && P.schematics[id].name === nm);
 	let k = 2; const root = nm;
 	while (taken()) nm = root + "_" + (k++);
 	return nm;
+}
+
+/* ---------- SPLIT A PROJECT ----------
+   A term's worth of labs piles up in one project until the sheet list is unusable.
+   Splitting is not just "copy these sheets out": a sheet carries its sub-blocks with
+   it, and the sheets LEFT BEHIND must not end up pointing at something that walked
+   away — that is the failure this code exists to prevent. */
+
+/* every sheet the given ones need, following SCH: references all the way down */
+function schClosure(ids, P) {
+	P = P || state.project;
+	const want = new Set(ids), stack = [...ids];
+	while (stack.length) {
+		const s = P.schematics[stack.pop()];
+		if (!s) continue;
+		(s.components || []).forEach(c => {
+			if (typeof c.type === "string" && c.type.indexOf("SCH:") === 0) {
+				const dep = c.type.slice(4);
+				if (P.schematics[dep] && !want.has(dep)) { want.add(dep); stack.push(dep); }
+			}
+		});
+	}
+	return want;
+}
+/* sheets that would be left pointing at nothing if `ids` moved out */
+function schDependents(ids, P) {
+	P = P || state.project;
+	const gone = new Set(ids), hurt = [];
+	Object.values(P.schematics).forEach(s => {
+		if (gone.has(s.id)) return;
+		const uses = (s.components || []).some(c => typeof c.type === "string"
+			&& c.type.indexOf("SCH:") === 0 && gone.has(c.type.slice(4)));
+		if (uses) hurt.push(s);
+	});
+	return hurt;
+}
+/* the custom components those sheets instantiate, transitively */
+function customsUsedBy(sheets, P) {
+	P = P || state.project;
+	const acc = new Set();
+	sheets.forEach(s => (s.components || []).forEach(c => {
+		if (typeof c.type === "string" && c.type.indexOf("CUSTOM:") === 0) {
+			const n = c.type.slice(7);
+			if (P.customs[n] && !acc.has(n)) {
+				acc.add(n);
+				collectCustomDeps(P.customs[n], acc);
+			}
+		}
+	}));
+	return acc;
+}
+
+/* After sheets leave a project it still has to be a working project: no tab or top
+   pointing at something that is gone, and never zero sheets. Applies to the open
+   project (whose desk is live in `state`) and to one sitting in the list alike. */
+function tidyProjectAfterRemoval(P) {
+	const live = P === state.project;
+	let tabs = (live ? state.openTabs : P.openTabs || []).filter(id => P.schematics[id]);
+	let act = live ? state.activeId : P.activeId;
+	if (!P.schematics[P.topId]) P.topId = Object.keys(P.schematics)[0] || null;
+	if (!P.schematics[act]) act = tabs[0] || P.topId;
+	if (!Object.keys(P.schematics).length) {
+		const fresh = blankSchematic(uid("sch"), "top");
+		P.schematics[fresh.id] = fresh; P.topId = fresh.id;
+		tabs = [fresh.id]; act = fresh.id;
+	}
+	if (!tabs.length && P.topId) tabs = [P.topId];
+	if (!act) act = tabs[0];
+	if (live) { state.openTabs = tabs; state.activeId = act; }
+	P.openTabs = tabs.slice(); P.activeId = act;
 }

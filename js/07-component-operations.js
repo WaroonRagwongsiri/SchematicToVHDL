@@ -254,77 +254,6 @@ function stampTapOnWire(w, point) {
 	return true;
 }
 
-/* the bus-side INPUT pin of a bus component (Bus Tap / Bus Ripper), or null */
-function busInPin(c) {
-	const td = typeDef(c);
-	if (!td) return null;
-	return td.ports(c.params || {}).find(p => p.dir === "in" && (p.bus || (p.width || 1) > 1)) || null;
-}
-/* AUTO-CONNECT a freshly placed bus component to a bus it was dropped on: if its
-   bus-side pin lands within tol of a bus wire (netWidth>1), snap the pin onto that
-   bus, split the bus with a junction, and wire the pin to it — so merely DROPPING
-   the part on a bus connects it, no wire to route. A Bus Ripper with its untouched
-   default slice is also seeded to a sensible half-split of the bus width. */
-function attachBusPinToWire(c, tol = 44) {
-	const sch = activeSch();
-	let pin = busInPin(c);
-	if (!pin) return false;
-	// already wired to that pin? leave it alone
-	if (sch.wires.some(w => (w.to.cid === c.id && w.to.pid === pin.id) || (w.from.cid === c.id && w.from.pid === pin.id))) return false;
-	const dpos0 = { x: c.x + pin.dx, y: c.y + pin.dy };
-	let best = null;
-	for (const w of sch.wires) {
-		if (netWidth(w, sch) <= 1) continue;                 // buses only
-		const at = nearestOnWire(w, dpos0, 0, sch);
-		if (at && (!best || at.d < best.at.d)) best = { w, at };
-	}
-	if (!best || best.at.d > tol) return false;
-	const at = best.at;
-	// orient a Bus Tap to point out the side it was dropped on, so it can ride the
-	// left/right or top/bottom of the trunk; the Ripper stays horizontal.
-	if (c.type === "BUSTAP") {
-		const szT = getSize(c); const cenX = c.x + szT.w / 2, cenY = c.y + szT.h / 2;   // body centre (any size)
-		c.params.dir = at.seg === "v" ? (cenX >= at.x ? "right" : "left")
-			: (cenY >= at.y ? "down" : "up");
-	}
-	pin = busInPin(c);                                    // a dir change moves the pin
-	const pp = { x: c.x + pin.dx, y: c.y + pin.dy };
-	// seat the part so its bus pin sits EXACTLY on the tap point → the connector is
-	// zero-length and it rides FLUSH on the bus, exactly like a clicked Bus Tap. If
-	// instead we left it offset, that connector would carry the full bus width and
-	// render as a THICK purple stub branching off the trunk (the "extra bent wire").
-	// NOTE: do NOT snap() here — the bus coord (at) may sit off the 11px grid (ports
-	// can), and snapping would nudge the pin off the junction, re-opening a stub.
-	c.x = c.x + (at.x - pp.x);
-	c.y = c.y + (at.y - pp.y);
-	const j = { id: uid("c"), type: "JUNCTION", x: at.x - 6, y: at.y - 6, params: {} };
-	sch.components.push(j);
-	splitWireThroughJunction(best.w, j, sch);
-	sch.wires.push({ id: uid("w"), from: { cid: j.id, pid: "j" }, to: { cid: c.id, pid: pin.id }, name: "" });
-	snapshot(); render(); renderInspector();
-	return true;
-}
-/* Called after a bus component is MOVED: keep it glued to the bus under its pin —
-   snap ONTO a bus when dragged close, drop OFF when dragged well clear of every
-   bus (the junction it sat on then heals back into the trunk). */
-function syncBusAttachment(c) {
-	const sch = activeSch();
-	const pin = busInPin(c);
-	if (!pin) return;
-	const label = "Bus Tap";
-	// Detach any existing bus connector first, then RE-SEAT flush at the current
-	// nearest point — so moving the part SLIDES it along the bus (instead of leaving
-	// its junction behind and stretching a thick stub). Moved clear → stays off.
-	const links = sch.wires.filter(w => (w.to.cid === c.id && w.to.pid === pin.id) || (w.from.cid === c.id && w.from.pid === pin.id));
-	const wasAttached = links.length > 0;
-	if (wasAttached) { sch.wires = sch.wires.filter(w => !links.includes(w)); healJunctions(sch); }
-	if (attachBusPinToWire(c)) {                             // near a bus → (re)seat flush
-		if (!wasAttached) toast(`เกาะ ${label} เข้าสายบัสแล้ว`, "ok", 2000);
-	} else if (wasAttached) {
-		toast(`ปลด ${label} ออกจากบัสแล้ว`, "info", 2200);
-	}
-}
-
 /* Add I/O Marker: click an unconnected pin → matching IN/OUT flag, wired straight */
 function addIOMarkerAt(c, p) {
 	const sch = activeSch();
@@ -356,7 +285,18 @@ function deleteSelection() {
 	// deleting a bus label removes the net's width definition — say so
 	const lostBus = sch.components.some(c => ids.has(c.id) && c.type === "JUNCTION"
 		&& c.params && c.params.busName && !sch.wires.some(w => w.to.cid === c.id));
+	// freeze every surviving fan-out dot's exit direction BEFORE the cut — otherwise
+	// losing one branch lets junctionExitH re-derive from whatever's left and re-elbow
+	// the siblings the user never touched
+	stampJunctionAxis(sch);
+	// deleting an IN/OUT changes this sheet's PORT LIST, so every parent sheet that
+	// instantiates it now has wires hanging off pins that no longer exist
+	const droppedPorts = sch.components.some(c => ids.has(c.id) && (c.type === "IN" || c.type === "OUT"));
+	const portsBefore = droppedPorts ? schPortList(sch) : null;
 	sch.components = sch.components.filter(c => !ids.has(c.id));
+	// removing one port renumbers the others (foo_1 → foo); without this the parent's
+	// wire still resolves — to a DIFFERENT pin, silently
+	const portSync = portsBefore ? remapSubBlockPins(sch.id, portsBefore, schPortList(sch)) : { moved: 0, dropped: 0 };
 	sch.wires = sch.wires.filter(w => !ids.has(w.id) && !ids.has(w.from.cid) && !ids.has(w.to.cid));
 	state.selection.clear();
 	// a wire being drawn FROM a component we just deleted must die with it — else the
@@ -364,12 +304,88 @@ function deleteSelection() {
 	// one-driver filter has already removed that sink's existing wire (silent loss)
 	if (state.pendingWire && !comp(state.pendingWire.cid, sch)) state.pendingWire = null;
 	healJunctions(sch);   // junctions clean themselves up when no longer needed
+	const orphans = (droppedPorts ? pruneDeadPinWires() : 0) + portSync.dropped;
 	snapshot(); renderAll();
 	if (lostBus) toast("ลบป้ายชื่อบัสแล้ว — สายนี้ไม่เป็นบัสอีกต่อไป (Bus Tap ที่เหลือจะฟ้องตอนตรวจ)", "warn", 3600);
+	if (orphans) toast(`ลบขาเข้า/ออกของวงจรนี้ — สายในแผ่นที่เรียกใช้วงจรนี้ถูกตัดออก ${orphans} เส้น`, "warn", 4200);
+}
+/* A TIE-OFF IS PART OF THE BLOCK, not part of the drawing around it. Copying four
+   flip-flops without the VCC on their J/K pins gives four registers that can never
+   change — the generator writes `null; -- J=K='0' → hold` and the counter silently
+   does nothing. VCC / GND / CONST are pure sources with no other meaning, so a copy
+   takes them with it, following junctions so a shared tie-off rail comes too.
+   Anything else whose driver is outside the selection is REPORTED instead: the wire
+   genuinely cannot come, and finding that out after the paste is too late.
+
+   But a tie-off must not be copied WHERE IT SAT. One VCC usually feeds a whole rail
+   through junctions somewhere off to the side, so cloning it with its geometry pasted
+   a flip-flop with a metre of wire trailing back to where the rail used to be. The
+   copy does not need that rail — it needs its own tie, next to the pin. So an
+   unselected tie-off is not copied at all: the plan records "this pin wants a VCC"
+   and the paste builds a fresh one against the pin.
+
+   If the user DID select the tie-off, they chose that geometry: the junction chain in
+   between comes along so the wire arrives exactly as drawn. */
+function copyPlan(sch, sel) {
+	const TIE = new Set(["VCC", "GND", "CONST"]);
+	const ids = new Set(sel);
+	const ties = [];
+	let lost = 0;
+	/* pull in the dots between a selected sink and a selected source, or the wire that
+	   joins them cannot be copied (both ends must be inside the set) */
+	const addChain = w => {
+		let cur = w, guard = 0;
+		while (cur && guard++ < 64) {
+			const f = comp(cur.from.cid, sch);
+			if (!f || f.type !== "JUNCTION") return;
+			ids.add(f.id);
+			cur = sch.wires.find(x => x.to.cid === f.id);
+		}
+	};
+	sch.wires.forEach(w => {
+		if (!sel.has(w.to.cid) || sel.has(w.from.cid)) return;
+		const d = netDriverPort(sch, w);
+		const src = d && comp(d.cid, sch);
+		if (src && TIE.has(src.type)) {
+			if (sel.has(src.id)) addChain(w);
+			else ties.push({
+				cid: w.to.cid, pid: w.to.pid, type: src.type,
+				params: JSON.parse(JSON.stringify(src.params || {}))
+			});
+			return;
+		}
+		lost++;                          // a real signal from outside; it cannot come
+	});
+	return { ids, ties, lost };
+}
+/* Build the recorded tie-offs against the pasted pins. Each pin gets its own block —
+   independent, so moving one copy can never disturb another — stepped further left
+   for each extra tie on the same component so two of them never land on top of
+   each other. */
+function placeTies(sch, ties, idMap, newSel) {
+	const placed = new Map();
+	(ties || []).forEach(t => {
+		const cid = idMap.get(t.cid); if (!cid) return;
+		const target = comp(cid, sch); if (!target) return;
+		const pp = portPos(target, t.pid); if (!pp) return;
+		const td = TYPES[t.type]; if (!td) return;
+		const params = JSON.parse(JSON.stringify(t.params || {}));
+		const op = (td.ports(params) || []).find(p => p.dir === "out"); if (!op) return;
+		const k = placed.get(cid) || 0; placed.set(cid, k + 1);
+		const nc = {
+			id: uid("c"), type: t.type, label: "", params,
+			x: snap(pp.x - (3 + k * 5) * GRID - op.dx),
+			y: snap(pp.y - op.dy)
+		};
+		sch.components.push(nc);
+		sch.wires.push({ id: uid("w"), from: { cid: nc.id, pid: op.id }, to: { cid, pid: t.pid }, name: "" });
+		if (newSel) newSel.add(nc.id);
+	});
 }
 function duplicateSelection() {
 	const sch = activeSch();
-	const ids = new Set(state.selection);
+	const grab = copyPlan(sch, state.selection);      // the copy needs its own tie-offs
+	const ids = grab.ids;
 	const newSel = new Set();
 	const idMap = new Map();
 	sch.components.filter(c => ids.has(c.id)).forEach(c => {
@@ -378,6 +394,7 @@ function duplicateSelection() {
 		// old +24 (24%11=2) shoved every copy — and every copied dot — off-grid, the
 		// classic "สายหัก" source the moment anything connects to or nudges the copy
 		nc.id = uid("c"); nc.x += 2 * GRID; nc.y += 2 * GRID;
+		if (nc.label) nc.label = uniqueLabel(sch, nc.label);
 		if (nc.type === "IN" || nc.type === "OUT") {
 			const used = new Set(sch.components.filter(x => x.type === nc.type).map(x => x.params.name));
 			let base = nc.params.name || (nc.type === "IN" ? "in" : "out");
@@ -400,20 +417,26 @@ function duplicateSelection() {
 		nw.to = { cid: idMap.get(w.to.cid), pid: w.to.pid };
 		sch.wires.push(nw);
 	});
+	placeTies(sch, grab.ties, idMap, newSel);
 	state.selection = newSel;
 	snapshot(); renderAll();
+	if (grab.lost) toast(`ทำซ้ำแล้ว — มี ${grab.lost} ขาที่ตัวขับอยู่นอกสิ่งที่เลือก ตัวที่คัดลอกจึงยังไม่มีสายที่ขานั้น`, "warn", 4600);
 }
 
 function copySelection() {
 	const sch = activeSch();
-	const ids = new Set(state.selection);
+	const grab = copyPlan(sch, state.selection);
+	const ids = grab.ids;
 	const comps = sch.components.filter(c => ids.has(c.id))
 		.map(c => JSON.parse(JSON.stringify(c)));
 	if (!comps.length) { toast("ไม่มี component ที่เลือก", "warn"); return; }
 	const wires = sch.wires.filter(w => ids.has(w.from.cid) && ids.has(w.to.cid))
 		.map(w => freezeAutoRoute(JSON.parse(JSON.stringify(w)), w, sch));
-	state.clipboard = { components: comps, wires };
-	toast(`คัดลอก ${comps.length} บล็อกแล้ว`, "ok");
+	state.clipboard = { components: comps, wires, ties: grab.ties };
+	toast(`คัดลอก ${comps.length} บล็อกแล้ว`
+		+ (grab.ties.length ? ` (พ่วง VCC/GND/CONST ที่ต่ออยู่มาด้วย ${grab.ties.length} ขา)` : "")
+		+ (grab.lost ? ` — มี ${grab.lost} ขาที่ตัวขับอยู่นอกสิ่งที่เลือก จะไม่มีสายตอนวาง` : ""),
+		grab.lost ? "warn" : "ok", grab.lost ? 4600 : 2200);
 }
 
 function pasteClipboard() {
@@ -438,6 +461,7 @@ function pasteClipboard() {
 		const q = nc.type === "JUNCTION" ? 6 : 0;
 		nc.x = snap(c.x + ox + q) - q;
 		nc.y = snap(c.y + oy + q) - q;
+		if (nc.label) nc.label = uniqueLabel(sch, nc.label);
 		if (nc.type === "IN" || nc.type === "OUT") {
 			const used = new Set(sch.components.filter(x => x.type === nc.type).map(x => x.params.name));
 			let base = nc.params.name || (nc.type === "IN" ? "in" : "out");
@@ -459,9 +483,12 @@ function pasteClipboard() {
 		nw.to = { cid: idMap.get(w.to.cid), pid: w.to.pid };
 		sch.wires.push(nw);
 	});
+	placeTies(sch, state.clipboard.ties, idMap, newSel);
 	state.selection = newSel;
 	snapshot(); render(); renderInspector();
-	toast(`วาง ${state.clipboard.components.length} บล็อกแล้ว`, "ok");
+	const nTie = (state.clipboard.ties || []).length;
+	toast(`วาง ${state.clipboard.components.length} บล็อกแล้ว`
+		+ (nTie ? ` พร้อม VCC/GND/CONST ติดขาใหม่ ${nTie} ตัว` : ""), "ok");
 }
 
 /* =========================================================================

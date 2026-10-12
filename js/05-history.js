@@ -6,7 +6,8 @@ function snapshot() {
 	const serialized = JSON.stringify({
 		p: state.project,
 		a: state.activeId,
-		t: state.openTabs
+		t: state.openTabs,
+		pid: state.activeProjectId
 	});
 
 	const history = state.history;
@@ -24,7 +25,11 @@ function snapshot() {
 function restore(serialized) {
 	const data = JSON.parse(serialized);
 
+	// restore() hands back a FRESH object; without re-binding it the workspace map
+	// would still hold the old one and the next switch would resurrect it
 	state.project = data.p;
+	const pid = data.pid || state.activeProjectId;
+	if (pid) { state.activeProjectId = pid; state.projects[pid] = data.p; data.p.id = pid; }
 	state.activeId = data.a;
 	state.openTabs = data.t;
 	state.selection.clear();

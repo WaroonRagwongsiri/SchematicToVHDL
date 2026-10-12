@@ -61,12 +61,16 @@
 						<button data-act="toggle-hops" id="miHops">⤴ จุดตัดสาย: เรียบ (แบบ ISE)</button>
 						<button data-act="toggle-arrange" id="miArrange">🐞 ไม่เรียงสายอัตโนมัติ</button>
 						<button data-act="show-hint">💡 แสดงคำแนะนำ</button>
+						<hr>
+						<button data-act="theme" data-theme="ise" class="mi-theme">ธีม: ISE (พื้นขาว)</button>
+						<button data-act="theme" data-theme="dark" class="mi-theme">ธีม: มืด (Studio)</button>
 					</div>
 				</div>
 			</nav>
 			<div class="grow"></div>
 			<span style="font-size:11px;color:var(--muted)">Project:</span>
 			<input class="proj-name" id="projectName" value="my_project" spellcheck="false">
+			<button class="btn btn-ghost" data-act="open-manual" title="เปิดคู่มือการใช้งาน">📘 คู่มือ</button>
 			<button class="btn btn-ghost" data-act="synth" title="Run synthesis check (F7)">🔍 Check</button>
 			<button class="btn btn-primary" data-act="gen-vhdl">⚙ Generate VHDL</button>
 		</header>
@@ -154,6 +158,1146 @@
 	</div>
 
 	<div id="modalRoot"></div>
+	<!-- in-app manual -->
+	<div id="manualView" hidden>
+		<div class="manual-frame">
+			<div class="manual-top">
+				<span class="manual-title">📘 คู่มือการใช้งาน — Schematic Studio</span>
+				<button class="btn" id="manualClose" title="ปิด (Esc)">✕ ปิด</button>
+			</div>
+			<div class="manual-scroll" id="manualScroll">
+				<style>
+					.manual-scroll {
+						color: var(--ink);
+						font-size: 15px;
+						line-height: 1.75;
+						--surface: var(--bg-2);
+						--sunk: var(--bg-3);
+						--danger: var(--err);
+						--ink-2: var(--ink-dim);
+						--bus: var(--wire-bus)
+					}
+
+					.manual-scroll h2 {
+						font-size: 21px;
+						margin: 34px 0 4px;
+						display: flex;
+						align-items: baseline;
+						gap: 10px;
+						color: var(--ink)
+					}
+
+					.manual-scroll h2 .num {
+						font-size: 12px;
+						font-weight: 600;
+						color: var(--accent);
+						border: 1px solid var(--accent);
+						border-radius: 5px;
+						padding: 1px 7px;
+						flex: 0 0 auto
+					}
+
+					.manual-scroll h3 {
+						font-size: 16.5px;
+						margin: 22px 0 2px;
+						color: var(--ink)
+					}
+
+					.manual-scroll p {
+						margin: 8px 0;
+						max-width: 78ch;
+						color: var(--ink-dim)
+					}
+
+					.manual-scroll p.sub {
+						color: var(--muted)
+					}
+
+					.manual-scroll b {
+						color: var(--ink)
+					}
+
+					.manual-scroll code {
+						background: var(--bg-3);
+						border-radius: 4px;
+						padding: 1px 5px;
+						font-family: "JetBrains Mono", "Consolas", monospace;
+						font-size: .88em;
+						color: var(--ink)
+					}
+
+					.manual-scroll kbd {
+						background: var(--bg-2);
+						border: 1px solid var(--line);
+						border-bottom-width: 2px;
+						border-radius: 5px;
+						padding: 1px 6px;
+						font-size: .82em;
+						white-space: nowrap;
+						color: var(--ink);
+						font-family: "JetBrains Mono", "Consolas", monospace
+					}
+
+					.man-toc {
+						display: flex;
+						flex-wrap: wrap;
+						gap: 6px;
+						margin: 14px 0 6px
+					}
+
+					.man-toc a {
+						display: inline-flex;
+						gap: 6px;
+						align-items: baseline;
+						text-decoration: none;
+						color: var(--ink-dim);
+						border: 1px solid var(--line);
+						border-radius: 999px;
+						padding: 3px 11px;
+						font-size: 12.5px;
+						background: var(--bg-2)
+					}
+
+					.man-toc a:hover {
+						color: var(--ink);
+						border-color: var(--accent)
+					}
+
+					.man-toc a b {
+						color: var(--accent);
+						font-size: 11px
+					}
+
+					.manual-scroll section {
+						scroll-margin-top: 10px
+					}
+
+					.manual-scroll figure {
+						margin: 16px 0 0;
+						background: var(--bg-2);
+						border: 1px solid var(--line);
+						border-radius: 10px;
+						overflow: hidden
+					}
+
+					.manual-scroll figure img {
+						display: block;
+						width: 100%;
+						height: auto;
+						border-bottom: 1px solid var(--line)
+					}
+
+					.manual-scroll figcaption {
+						padding: 9px 14px;
+						font-size: 12.5px;
+						color: var(--ink-dim);
+						display: flex;
+						gap: 9px;
+						align-items: baseline
+					}
+
+					.manual-scroll figcaption b {
+						font-size: 10.5px;
+						letter-spacing: .09em;
+						text-transform: uppercase;
+						color: var(--accent);
+						white-space: nowrap;
+						flex: 0 0 auto
+					}
+
+					.manual-scroll ol.steps {
+						list-style: none;
+						counter-reset: s;
+						margin: 12px 0 0;
+						padding: 0;
+						display: flex;
+						flex-direction: column;
+						gap: 10px
+					}
+
+					.manual-scroll ol.steps>li {
+						counter-increment: s;
+						position: relative;
+						padding-left: 36px;
+						max-width: 78ch;
+						color: var(--ink-dim)
+					}
+
+					.manual-scroll ol.steps>li::before {
+						content: counter(s);
+						position: absolute;
+						left: 0;
+						top: 1px;
+						width: 23px;
+						height: 23px;
+						border-radius: 50%;
+						background: var(--accent);
+						color: #fff;
+						font-size: 12px;
+						font-weight: 600;
+						display: grid;
+						place-items: center
+					}
+
+					.manual-scroll ul.plain {
+						margin: 8px 0;
+						padding-left: 20px;
+						max-width: 78ch;
+						color: var(--ink-dim)
+					}
+
+					.manual-scroll ul.plain li {
+						margin: 4px 0
+					}
+
+					.manual-scroll .tbl {
+						margin: 14px 0 0;
+						border: 1px solid var(--line);
+						border-radius: 9px;
+						overflow-x: auto;
+						background: var(--bg-1)
+					}
+
+					.manual-scroll table {
+						border-collapse: collapse;
+						width: 100%;
+						font-size: 13px;
+						min-width: 520px
+					}
+
+					.manual-scroll th,
+					.manual-scroll td {
+						text-align: left;
+						padding: 8px 12px;
+						border-bottom: 1px solid var(--line);
+						vertical-align: top;
+						color: var(--ink-dim)
+					}
+
+					.manual-scroll th {
+						font-size: 11.5px;
+						letter-spacing: .05em;
+						text-transform: uppercase;
+						color: var(--muted);
+						background: var(--bg-2);
+						white-space: nowrap
+					}
+
+					.manual-scroll tr:last-child td {
+						border-bottom: none
+					}
+
+					.manual-scroll td.k {
+						white-space: nowrap;
+						font-family: "JetBrains Mono", "Consolas", monospace;
+						font-size: 12px;
+						color: var(--ink)
+					}
+
+					.manual-scroll .chip {
+						display: inline-block;
+						font-size: 10.5px;
+						padding: 2px 8px;
+						border-radius: 999px;
+						white-space: nowrap;
+						font-weight: 600;
+						font-family: "JetBrains Mono", "Consolas", monospace
+					}
+
+					.manual-scroll .chip.err {
+						background: color-mix(in srgb, var(--err) 16%, transparent);
+						color: var(--err)
+					}
+
+					.manual-scroll .chip.warn {
+						background: color-mix(in srgb, var(--warn) 16%, transparent);
+						color: var(--warn)
+					}
+
+					.manual-scroll .note {
+						margin: 16px 0 0;
+						padding: 11px 14px;
+						border-radius: 9px;
+						max-width: 80ch;
+						background: var(--bg-2);
+						border: 1px solid var(--line);
+						border-left: 3px solid var(--accent)
+					}
+
+					.manual-scroll .note p {
+						margin: 3px 0;
+						max-width: none
+					}
+
+					.manual-scroll .note .lbl {
+						font-weight: 700;
+						color: var(--accent)
+					}
+
+					.manual-scroll .note.trap {
+						border-left-color: var(--err)
+					}
+
+					.manual-scroll .note.trap .lbl {
+						color: var(--err)
+					}
+
+					.manual-scroll .note.good {
+						border-left-color: var(--ok)
+					}
+
+					.manual-scroll .note.good .lbl {
+						color: var(--ok)
+					}
+
+					.manual-scroll .note.bus {
+						border-left-color: var(--wire-bus)
+					}
+
+					.manual-scroll .note.bus .lbl {
+						color: var(--wire-bus)
+					}
+
+					.manual-scroll pre {
+						margin: 12px 0 0;
+						padding: 12px 14px;
+						background: var(--bg-2);
+						border: 1px solid var(--line);
+						border-radius: 9px;
+						overflow-x: auto;
+						font-size: 12.5px;
+						line-height: 1.6;
+						color: var(--ink-dim);
+						font-family: "JetBrains Mono", "Consolas", monospace
+					}
+
+					.manual-scroll pre b {
+						color: var(--ink)
+					}
+				</style>
+				<nav class="man-toc"><a href="#man-s1"><b>01</b> หน้าตาโปรแกรม</a><a href="#man-s2"><b>02</b> วางชิ้นส่วน</a><a href="#man-s3"><b>03</b> ต่อสาย</a><a href="#man-s4"><b>04</b> บัส (Bus)</a><a href="#man-s5"><b>05</b> ปรับค่าใน Inspector</a><a href="#man-s6"><b>06</b> ตรวจก่อนสร้างโค้ด</a><a href="#man-s7"><b>07</b> สร้าง VHDL</a><a href="#man-s8"><b>08</b> หลายแผ่นและ sub-block</a><a href="#man-s9"><b>09</b> บันทึก เปิด นำเข้า</a><a href="#man-s10"><b>10</b> ธีมและมุมมอง</a><a href="#man-s11"><b>11</b> คีย์ลัด</a><a href="#man-s12"><b>12</b> กับดักที่เจอบ่อย</a><a href="#man-s13"><b>13</b> Vivado หาบอร์ดไม่เจอ — สลับ driver ของบอร์ด</a><a href="#man-s14"><b>14</b> Preset กับ Clear ของ flip-flop</a></nav>
+
+				<section id="man-s1">
+					<h2><span class="num">01</span> หน้าตาโปรแกรม</h2>
+					<p class="sub">เปิดไฟล์นี้ด้วยเบราว์เซอร์ ไม่ต้องติดตั้งอะไรเพิ่ม หน้าจอแบ่งเป็น 5 ส่วน</p>
+
+					<figure>
+						<img src="img/manual-01.png" alt="หน้าจอ Schematic Studio ทั้งหมด พร้อมวงจรครึ่งบวก (half adder)">
+						<figcaption><b>รูปที่ 1</b><span>หน้าจอทั้งหมด ตัวอย่างเป็นวงจรครึ่งบวก a, b → sum, carry</span></figcaption>
+					</figure>
+
+					<div class="tbl">
+						<table>
+							<thead>
+								<tr>
+									<th>ส่วน</th>
+									<th>ตำแหน่ง</th>
+									<th>ใช้ทำอะไร</th>
+								</tr>
+							</thead>
+							<tbody>
+								<tr>
+									<td class="k">แถบเมนู</td>
+									<td>บนสุด</td>
+									<td>File / Edit / Tools / View, ชื่อโปรเจกต์, ปุ่ม <b>Check</b> (ตรวจวงจร) และ <b>Generate
+											VHDL</b></td>
+								</tr>
+								<tr>
+									<td class="k">แผงซ้าย</td>
+									<td>ซ้าย</td>
+									<td>แท็บ <b>Project</b> = รายชื่อ schematic, นำเข้า .vhd, ใช้แผ่นอื่นเป็นบล็อกย่อย · แท็บ
+										<b>Components</b> = คลังชิ้นส่วน</td>
+								</tr>
+								<tr>
+									<td class="k">Canvas</td>
+									<td>กลาง</td>
+									<td>พื้นที่วาดวงจร มีแถบเครื่องมือแนวตั้งอยู่ซ้ายบน และตัวควบคุมซูมอยู่ขวาบน</td>
+								</tr>
+								<tr>
+									<td class="k">แผงขวา</td>
+									<td>ขวา</td>
+									<td><b>Inspector</b> ปรับค่าของสิ่งที่เลือก · <b>Issues</b> ผลการตรวจ · <b>VHDL</b> โค้ดที่สร้างได้
+									</td>
+								</tr>
+								<tr>
+									<td class="k">แถบสถานะ</td>
+									<td>ล่างสุด</td>
+									<td>จำนวนชิ้นส่วนและสาย, แผ่นที่เป็น top, สถานะ autosave, พิกัดเมาส์ และระดับซูม</td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
+
+					<h3>แถบเครื่องมือแนวตั้ง</h3>
+					<div class="tbl">
+						<table>
+							<thead>
+								<tr>
+									<th>ปุ่ม</th>
+									<th>คีย์</th>
+									<th>หน้าที่</th>
+								</tr>
+							</thead>
+							<tbody>
+								<tr>
+									<td class="k">➤ เลือก</td>
+									<td class="k">Esc</td>
+									<td>เลือกและลากย้ายชิ้นส่วน ลากคลุมเพื่อเลือกหลายชิ้น</td>
+								</tr>
+								<tr>
+									<td class="k">╱ สาย</td>
+									<td class="k">W</td>
+									<td>ต่อสาย คลิกขา → คลิกขา หรือคลิกกลางสายเดิมเพื่อแตกสาย</td>
+								</tr>
+								<tr>
+									<td class="k">ab ชื่อ net</td>
+									<td class="k">N</td>
+									<td>คลิกที่สายเพื่อตั้งชื่อสัญญาณ</td>
+								</tr>
+								<tr>
+									<td class="k">⇥ I/O marker</td>
+									<td class="k">I</td>
+									<td>คลิกขาที่ว่างเพื่อแปะพอร์ต INPUT หรือ OUTPUT ให้ทันที</td>
+								</tr>
+								<tr>
+									<td class="k">≣ Bus Tap</td>
+									<td class="k">B</td>
+									<td>วางจุดแตก/รวมบิตบนสายบัส</td>
+								</tr>
+								<tr>
+									<td class="k">⊞ Symbol</td>
+									<td class="k">—</td>
+									<td>เปิดแผง Components</td>
+								</tr>
+								<tr>
+									<td class="k">🔓 ล็อกการจัดวาง</td>
+									<td class="k">—</td>
+									<td>ตรึงตำแหน่งทุกอย่างที่วางไว้ — ชิ้นส่วน สาย และจุดต่อ ขยับไม่ได้ทั้งโปรแกรมและผู้ใช้ แต่ยังเลือก
+										ต่อสายเพิ่ม ตั้งชื่อ และลบได้ตามปกติ</td>
+								</tr>
+								<tr>
+									<td class="k">↻ จัดสายใหม่</td>
+									<td class="k">—</td>
+									<td>จัดเส้นสายทั้งแผ่นใหม่ ทำครั้งเดียวตามสั่ง ไม่ทำเองอัตโนมัติ</td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
+
+					<div class="note">
+						<p class="lbl">การเลื่อนจอ</p>
+						<p>หมุนล้อเมาส์ = เลื่อนขึ้นลง · กด <kbd>Space</kbd> ค้างแล้วลาก = เลื่อนอิสระ · <kbd>Ctrl</kbd>+ล้อ = ซูม
+							· <kbd>Home</kbd> = ย่อให้เห็นทั้งวงจร</p>
+					</div>
+				</section>
+
+				<section id="man-s2">
+					<h2><span class="num">02</span> วางชิ้นส่วน</h2>
+					<p class="sub">เปิดแท็บ <b>Components</b> ที่แผงซ้าย แล้วลากชิ้นส่วนมาวางบน canvas (หรือคลิกที่ชิ้นส่วน —
+						โปรแกรมจะวางลงกลางมุมมองให้ทันที แล้วค่อยลากไปที่ที่ต้องการ)</p>
+
+					<figure>
+						<img src="img/manual-02.png" alt="แผง Components แสดงหมวด I/O PORTS, LOGIC GATES และ MUX / DEMUX">
+						<figcaption><b>รูปที่ 2</b><span>คลังชิ้นส่วน แบ่งเป็นหมวดตามชนิดของวงจร</span></figcaption>
+					</figure>
+
+					<div class="tbl">
+						<table>
+							<thead>
+								<tr>
+									<th>หมวด</th>
+									<th>ชิ้นส่วน</th>
+									<th>หมายเหตุ</th>
+								</tr>
+							</thead>
+							<tbody>
+								<tr>
+									<td class="k">I/O PORTS</td>
+									<td class="k">INPUT · OUTPUT · VCC · GND · CONST</td>
+									<td>INPUT/OUTPUT คือขาของ entity ที่จะออกไปเป็นพอร์ตใน VHDL ตั้งชื่อและกำหนดความกว้างบิตได้ ·
+										VCC/GND ยึดสาย 1 บิตไว้ที่ '1'/'0' · <b>CONST</b> ยึดทั้งบัสไว้ที่ค่าคงที่ตั้งเอง
+										กรอกเป็นเลขฐานสิบหก (เช่น F4 หรือ 0xF4) เอาไว้ล็อกขา OUTPUT หรือสตรัปขาของบล็อกย่อยให้คงที่</td>
+								</tr>
+								<tr>
+									<td class="k">LOGIC GATES</td>
+									<td class="k">AND · OR · NAND · NOR · XOR · XNOR · NOT · BUF</td>
+									<td>เกตสองอินพุตขึ้นไปเพิ่มจำนวนขาได้ใน Inspector</td>
+								</tr>
+								<tr>
+									<td class="k">MUX / DEMUX</td>
+									<td class="k">MUX · DEMUX</td>
+									<td>เลือกจำนวนช่องได้ 2, 4, 8, 16</td>
+								</tr>
+								<tr>
+									<td class="k">ENCODER / DECODER</td>
+									<td class="k">ENCODER · DECODER</td>
+									<td>ขนาด 4, 8, 16</td>
+								</tr>
+								<tr>
+									<td class="k">COMPARATOR</td>
+									<td class="k">COMP · COMPM</td>
+									<td>COMP ตรวจ "เท่ากัน" · COMPM ให้ผล "มากกว่า/น้อยกว่า" ขนาด 2 และ 4 บิตแยกขาทีละบิต ส่วน 8 และ
+										16 บิตใช้ขาบัสข้างละเส้น</td>
+								</tr>
+								<tr>
+									<td class="k">BUS TAP</td>
+									<td class="k">Bus Tap</td>
+									<td>จุดแตกหรือรวมบิตบนสายบัส ดูหัวข้อ 04</td>
+								</tr>
+								<tr>
+									<td class="k">FLIP-FLOPS</td>
+									<td class="k">D-FF · JK-FF · T-FF · SR-FF</td>
+									<td>ต้องต่อขา CLK เสมอ ไม่งั้นจะไม่ถูกสร้างเป็นวงจร · ทุกตัวมี Q และ Q̅ · เปิด Async reset
+										(clear) / Async preset ได้ใน Inspector — ดูหัวข้อ 14</td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
+
+					<p>ยังมี <b>จุดต่อสาย (junction)</b> อีกหนึ่งชนิดที่ไม่มีในคลัง เพราะโปรแกรมสร้างให้เองเมื่อสายหนึ่งแตกไปหลายทาง</p>
+
+					<div class="note">
+						<p class="lbl">ย้าย หมุน ทำซ้ำ</p>
+						<p>ลากเพื่อย้าย · <kbd>R</kbd> หมุน 90° (<kbd>Shift</kbd>+<kbd>R</kbd> หมุนกลับทาง) · <kbd>M</kbd>
+							พลิกซ้ายขวา · <kbd>Ctrl</kbd>+<kbd>D</kbd> ทำซ้ำ · ปุ่มลูกศรขยับทีละหนึ่งช่องกริด</p>
+					</div>
+				</section>
+
+				<section id="man-s3">
+					<h2><span class="num">03</span> ต่อสาย</h2>
+					<p class="sub">ขา 1 บิตมีจุดกลมเล็ก ๆ ที่ปลาย ส่วนขาบัสเป็นสี่เหลี่ยมเล็ก ๆ แบบ ISE — คลิกที่เครื่องหมายนั้นคือการเริ่มหรือจบสาย
+					</p>
+
+					<figure>
+						<img src="img/manual-03.png" alt="กำลังลากสายจากขาออกของพอร์ต a ไปยังเกต AND">
+						<figcaption><b>รูปที่ 3</b><span>สายเส้นแรกต่อเสร็จแล้ว เส้นที่สองกำลังลากออกจากขา a รอคลิกขาปลายทาง</span>
+						</figcaption>
+					</figure>
+
+					<ol class="steps">
+						<li>คลิกที่ <b>จุดขาต้นทาง</b> (ขาออกของพอร์ตหรือของเกต) เส้นประจะวิ่งตามเมาส์</li>
+						<li>ถ้าต้องการหักมุมเอง คลิกบนที่ว่างเพื่อปักจุดหัก กด <kbd>Backspace</kbd> ถอยจุดหักล่าสุด</li>
+						<li>คลิกที่ <b>จุดขาปลายทาง</b> สายจะต่อและจัดแนวให้เอง</li>
+					</ol>
+					<p>ระหว่างลาก กด <kbd>Esc</kbd> เพื่อยกเลิก หรือ <kbd>Enter</kbd> เพื่อจบสายไว้กลางอากาศ</p>
+
+					<h3>แตกสายไปหลายจุด</h3>
+					<p>ถ้าสัญญาณหนึ่งต้องไปหลายที่ ให้คลิกที่ <b>กลางสายเส้นเดิม</b> แล้วคลิกขาปลายทาง
+						โปรแกรมจะสร้างจุดต่อ (dot) ตรงตำแหน่งที่คลิกพอดี</p>
+
+					<figure>
+						<img src="img/manual-04.png" alt="สัญญาณ a แตกออกเป็นสองทางผ่านจุดต่อ ไปเข้า NOT สองตัว">
+						<figcaption><b>รูปที่ 4</b><span>จุดต่อสีฟ้าคือจุดที่สายแยกออกเป็นสองทาง</span></figcaption>
+					</figure>
+
+					<div class="note bus">
+						<p class="lbl">ผูกขา input สองขาเข้าด้วยกันได้</p>
+						<p>คลิกขา input ของสองชิ้นติดกัน โปรแกรมจะผูกทั้งคู่ไว้บนเน็ตเดียว เมื่อลากแหล่งจ่ายมาต่อทีหลัง
+							ทั้งสองขาจะได้สัญญาณพร้อมกัน</p>
+					</div>
+
+					<div class="note trap">
+						<p class="lbl">หนึ่งเน็ต หนึ่งตัวขับ</p>
+						<p>เอาต์พุตสองตัวต่อเข้าเน็ตเดียวกันไม่ได้ ถ้าลากไปแตะสายที่มีตัวขับอยู่แล้ว โปรแกรมจะปฏิเสธพร้อมบอกเหตุผล</p>
+					</div>
+				</section>
+
+				<section id="man-s4">
+					<h2><span class="num">04</span> บัส (Bus)</h2>
+					<p class="sub">บัสคือสายที่กว้างกว่า 1 บิต เกิดจากการตั้ง <b>ความกว้าง (bit)</b> ให้พอร์ต IN/OUT หรือใช้ขาบัสของชิ้นส่วน
+						สายบัสวาดหนากว่าสายปกติเสมอ (ธีมมืดใช้สีม่วงแยกจากสายสีฟ้า ส่วนธีม ISE เป็นน้ำเงินเดียวกันต่างที่ความหนา —
+						ตามแบบ ISE จริง)</p>
+
+					<p><b>Bus Tap</b> คือตัวเชื่อมระหว่างบัสกับสายที่แคบกว่า — หนึ่งอันดูแลหนึ่งบิต หรือหลายบิตติดกันก็ได้ วางได้สองทาง
+					</p>
+					<ol class="steps">
+						<li><b>ลากสายรอไว้ก่อน</b> — ลากสายจากขาเกต จบปลายไว้กลางอากาศใกล้ ๆ บัส แล้วกด <kbd>B</kbd> คลิกบนบัสตรงจุดนั้น
+							tap จะวางลง กลืนปลายสายที่รอ และ<b>เดาโหมด</b>จากสายเส้นนั้น: ปลายลากมาจากขา output →
+							รวมบิตเข้าบัส (merge), ลากมาจากขา input → แตกบิตออกจากบัส (split)</li>
+						<li><b>วาง tap เปล่าก่อน</b> — กด <kbd>B</kbd> แล้วคลิกบนบัสได้เลย ได้ tap ที่จับบิตว่างตัวถัดไป
+							<b>ในโหมด split เสมอ</b> จากนั้นลากสายจากปลายแหลมของ tap เข้าขาเกต — ถ้าลากจากขา output
+							ของเกตมาต่อปลาย tap ที่ยังว่าง โปรแกรมจะสลับโหมดเป็น merge ให้พร้อมแจ้งเตือน</li>
+					</ol>
+
+					<h3>แตกออกมาเป็นบัสก็ได้</h3>
+					<p>Bus Tap หนึ่งอันไม่จำเป็นต้องดึงทีละบิต — ช่อง <b>จำนวนบิต</b> ใน Inspector บอกว่าจะเอาออกมากี่บิต
+						คู่กับช่อง <b>บิตเริ่มที่</b> ก็ได้ช่วงบิตตามต้องการ เช่นเริ่มที่บิต 4 จำนวน 4 บิต คือ <code>d(7:4)</code>
+						บนสัญลักษณ์จะขึ้นเป็น <code>7:4</code> แทนเลขเดี่ยว และ<b>สายที่ออกจากปลายแหลมกลายเป็นบัสกว้างเท่านั้น</b>
+						ต่อเข้าขาบัสของชิ้นส่วนอื่นหรือของบล็อกย่อยได้ทันที</p>
+					<div class="tbl">
+						<table>
+							<thead>
+								<tr>
+									<th>ตั้งค่า</th>
+									<th>โค้ดที่ได้ (แตกจากบัส d)</th>
+									<th>ใช้ตอนไหน</th>
+								</tr>
+							</thead>
+							<tbody>
+								<tr>
+									<td class="k">บิตเริ่ม 0 · จำนวน 1</td>
+									<td class="k">d(0)</td>
+									<td>ดึงทีละบิตเข้าเกตธรรมดา (ค่าตั้งต้น)</td>
+								</tr>
+								<tr>
+									<td class="k">บิตเริ่ม 0 · จำนวน 4</td>
+									<td class="k">d(3 downto 0)</td>
+									<td>ส่งครึ่งล่างเข้าบล็อกย่อยที่รับ 4 บิต</td>
+								</tr>
+								<tr>
+									<td class="k">บิตเริ่ม 4 · จำนวน 4</td>
+									<td class="k">d(7 downto 4)</td>
+									<td>ครึ่งสูงของบัส 8 บิต</td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
+					<p>ฝั่ง merge ก็ทำได้เหมือนกัน — tap สองอันขนาด 4 บิต ประกอบเป็นพอร์ต 8 บิตได้เลย:
+						<code>q(3 downto 0) &lt;= lo;</code> กับ <code>q(7 downto 4) &lt;= hi;</code>
+					</p>
+
+					<div class="note trap">
+						<p class="lbl">สลิซต้องอยู่ในขอบบัส</p>
+						<p>เริ่มที่บิต 6 แล้วขอ 4 บิตจากบัส 8 บิต จะเลยขอบไปถึงบิต 9 ซึ่งไม่มีจริง — Issues จะฟ้อง
+							"Bus Tap แตะบิต 9:6 แต่บัสมีแค่ (7:0)" และตัวสามเหลี่ยมจะเป็นสีแดงบนผัง ตั้งค่าใน Inspector จะถูกตัดให้พอดีกับขอบให้เอง
+						</p>
+					</div>
+
+					<div class="note trap">
+						<p class="lbl">ตรวจโหมดเองเสมอ</p>
+						<p>โปรแกรมเดาโหมดเฉพาะตอนวาง tap และเดาผิดได้ — คลิกที่ tap แล้วดู Inspector ทุกครั้ง:
+							ช่อง <b>ทิศทางบิต</b> (split = อ่านบิตออกจากบัส, merge = เขียนบิตเข้าบัส)
+							และช่อง <b>บิตที่</b> ว่าตรงกับบิตที่ต้องการ ทั้งสองช่องแก้ได้ตรงนั้นเลย</p>
+					</div>
+
+					<h3>ตัวอย่าง: แตกบิตออกจากบัส (split)</h3>
+					<ol class="steps">
+						<li>ตั้ง <b>ความกว้าง (bit)</b> ของพอร์ต INPUT เป็น 4 — ป้ายชื่อจะกลายเป็น <code>d(3:0)</code></li>
+						<li>ลากสายจากพอร์ตออกมาเป็นรางบัส จบปลายไว้กลางอากาศ (ปลายเปิดของรางบัสไม่นับเป็นสายลอย)</li>
+						<li>วาง Bus Tap บนราง หนึ่งอันต่อหนึ่งบิต แล้วต่อปลายแหลมของแต่ละอันเข้าขาเกต</li>
+						<li>เลือก tap ทีละอัน ตรวจช่อง <b>บิตที่</b> ให้ตรงกับบิตที่ต้องการ</li>
+					</ol>
+
+					<figure>
+						<img src="img/manual-05.png"
+							alt="บิต 0 และ 1 ของบัส d(3:0) ถูกดึงผ่าน Bus Tap เข้าเกต XOR แล้วออกที่ y">
+						<figcaption><b>รูปที่ 5</b><span>บิต 0 และ 1 ของ <code>d(3:0)</code> ถูกดึงเข้าเกต XOR — Inspector ทางขวาคือช่อง
+								"บิตที่" และ "ทิศทางบิต" ของ tap ที่เลือกอยู่</span></figcaption>
+					</figure>
+
+					<h3>ตัวอย่าง: รวมบิตเข้าเป็นบัส (merge)</h3>
+					<p>ทิศกลับกันใช้ท่าเดียวกัน: ตั้งความกว้างที่พอร์ต OUTPUT ลากรางบัสจากพอร์ตแล้วปล่อยปลายเปิดไว้
+						วาง tap ทีละบิต แล้วลากสายจากขา output ของเกตมาเข้าปลายแหลมของ tap — โหมดจะสลับเป็น merge ให้เอง
+						ในรูปคือ half adder ที่ sum เข้าบิต 0 และ carry เข้าบิต 1</p>
+
+					<figure>
+						<img src="img/manual-06.png"
+							alt="half adder ที่ sum และ carry ถูกรวมขึ้นบัส q(1:0) ด้วย Bus Tap สองอัน">
+						<figcaption><b>รูปที่ 6</b><span>sum → บิต 0, carry → บิต 1 ของ <code>q(1:0)</code> —
+								ปลายเปิดของรางบัสด้านซ้ายปล่อยค้างไว้ได้</span></figcaption>
+					</figure>
+
+					<div class="note trap">
+						<p class="lbl">ความกว้างต้องตรงกัน</p>
+						<p>สายบัสต่อตรงเข้าขาที่ความกว้างไม่เท่ากันไม่ได้ทั้งสองทิศ (4 บิตเข้า 1 บิต หรือ 4 บิตเข้า 8 บิต ก็ผิดทั้งคู่)
+							Issues จะบอกจำนวนบิตของทั้งสองฝั่งให้ ถ้าต้องการบิตเดียวจากบัสให้ใช้ Bus Tap และเลขบิตต้องไม่เกินความกว้างของบัส
+						</p>
+					</div>
+				</section>
+
+				<section id="man-s5">
+					<h2><span class="num">05</span> ปรับค่าใน Inspector</h2>
+					<p class="sub">คลิกชิ้นส่วนหรือสายหนึ่งครั้ง แท็บ Inspector จะแสดงค่าที่แก้ได้ทั้งหมดของสิ่งนั้น
+						(ถ้าแผงขวาค้างอยู่ที่ Issues หรือ VHDL ให้ดับเบิลคลิกหรือคลิกขวาที่ชิ้นส่วน โปรแกรมจะสลับมาที่ Inspector ให้)
+					</p>
+
+					<figure>
+						<img src="img/manual-07.png" alt="Inspector แสดงค่าของ MUX ที่เลือกอยู่">
+						<figcaption><b>รูปที่ 7</b><span>เลือก MUX แล้วเปลี่ยนจำนวนช่อง ตำแหน่ง ชื่อ และทิศทางได้จากแผงนี้</span>
+						</figcaption>
+					</figure>
+
+					<ul class="plain">
+						<li><b>Position</b> — พิกัดของชิ้นส่วน พิมพ์ตัวเลขตรง ๆ ได้</li>
+						<li><b>ชื่อ (label)</b> — ชื่อที่ใช้เรียกในโค้ด เช่น <code>adder</code> (บล็อกย่อยจะถูกเติม <code>u_</code>
+							ให้เองในโค้ด กลายเป็น <code>u_adder</code>)</li>
+						<li><b>Pin name</b> และ <b>ความกว้าง (bit)</b> — สำหรับ INPUT/OUTPUT คือชื่อและขนาดของพอร์ตใน entity</li>
+						<li><b>ทิศทาง</b> — ปุ่มหมุนและพลิก ตัวหนังสือบนสัญลักษณ์จะยังคงหัวตั้งเสมอ</li>
+						<li><b>Net name</b> (เมื่อเลือกสาย) — ตั้งชื่อสัญญาณ</li>
+					</ul>
+
+					<div class="note good">
+						<p class="lbl">ลบชื่อ net</p>
+						<p>ล้างช่อง Net name ให้ว่างแล้วกด Enter คือการ <b>ลบชื่อทิ้ง</b> สัญญาณจะกลับไปใช้ชื่ออัตโนมัติ
+							ถ้ากด Cancel ตอนมันถามชื่อ ชื่อเดิมจะยังอยู่</p>
+					</div>
+
+					<h3>ล็อกการจัดวาง</h3>
+					<p>ปกติโปรแกรมจะจัดแนวสายให้อัตโนมัติเมื่อมีการต่อหรือย้าย ถ้าจัดวางจนพอใจแล้วให้กดปุ่ม
+						<b>🔓 ล็อกการจัดวาง</b> ที่แถบเครื่องมือ ทุกอย่างจะอยู่กับที่ ทั้งของโปรแกรมและของผู้ใช้เอง
+						เปิดไฟล์กลับมาก็ยังอยู่ตำแหน่งเดิม ถ้าอยากให้จัดใหม่ทั้งแผ่นครั้งเดียว ใช้ปุ่ม <b>↻ จัดสายใหม่</b></p>
+				</section>
+
+				<section id="man-s6">
+					<h2><span class="num">06</span> ตรวจก่อนสร้างโค้ด</h2>
+					<p class="sub">กด <kbd>F7</kbd> หรือปุ่ม <b>🔍 Check</b> ผลจะขึ้นที่แท็บ <b>Issues</b>
+						คลิกที่ข้อความเพื่อกระโดดไปยังจุดที่มีปัญหา</p>
+
+					<figure>
+						<img src="img/manual-08.png" alt="แท็บ Issues แสดงคำเตือนขาที่ยังไม่ต่อ และ error สายปลายลอย">
+						<figcaption><b>รูปที่ 8</b><span>สีเหลืองคือคำเตือน สีแดงคือ error ที่ทำให้โค้ดออกมาผิด</span></figcaption>
+					</figure>
+
+					<div class="tbl">
+						<table>
+							<thead>
+								<tr>
+									<th>ระดับ</th>
+									<th>ข้อความ</th>
+									<th>แปลว่า / แก้ยังไง</th>
+								</tr>
+							</thead>
+							<tbody>
+								<tr>
+									<td><span class="chip err">error</span></td>
+									<td>OUTPUT 'x' ต่อสายไว้แต่ปลายสายลอย</td>
+									<td>มีสายต่ออยู่จริงแต่ปลายอีกด้านจบกลางอากาศ ไม่มีอะไรขับ โค้ดจะออกมาเป็น
+										<code>(others =&gt; '0')</code> คือศูนย์ค้าง ให้ลากปลายสายไปต่อกับตัวขับจริง</td>
+								</tr>
+								<tr>
+									<td><span class="chip err">error</span></td>
+									<td>OUTPUT 'x' ยังไม่ได้ต่อสาย</td>
+									<td>พอร์ตออกยังไม่มีสายเลย</td>
+								</tr>
+								<tr>
+									<td><span class="chip err">error</span></td>
+									<td>ความกว้างบัสไม่ตรงกัน</td>
+									<td>ความกว้างสองฝั่งไม่เท่ากัน — ผิดทั้งสองทิศ (4 บิตเข้า 1 บิต หรือ 4 บิตเข้า 8 บิต)
+										ข้อความบอกจำนวนบิตทั้งสองฝั่ง ใช้ Bus Tap ดึงทีละบิต</td>
+								</tr>
+								<tr>
+									<td><span class="chip err">error</span></td>
+									<td>จุดแยกสาย / ขาชิ้นส่วน มีสายเข้าซ้อนกัน N เส้น — driver ชนกัน</td>
+									<td>มีตัวขับสองตัวบนเน็ตเดียว ลบสายเส้นใดเส้นหนึ่งออก</td>
+								</tr>
+								<tr>
+									<td><span class="chip err">error</span></td>
+									<td>ขา 'clk' ยังไม่ได้ต่อสัญญาณนาฬิกา</td>
+									<td>flip-flop ที่ไม่มีนาฬิกาจะไม่ถูกสร้างเป็นวงจร</td>
+								</tr>
+								<tr>
+									<td><span class="chip err">error</span></td>
+									<td>INPUT / OUTPUT ชื่อซ้ำ</td>
+									<td>พอร์ตสองตัวใช้ชื่อเดียวกัน เปลี่ยนชื่อใดชื่อหนึ่ง</td>
+								</tr>
+								<tr>
+									<td><span class="chip err">error</span></td>
+									<td>วงวนลำดับชั้น</td>
+									<td>แผ่น A ใส่แผ่น B ที่ย้อนกลับมาใช้ A ดูหัวข้อ 08</td>
+								</tr>
+								<tr>
+									<td><span class="chip warn">warn</span></td>
+									<td>ขา 'i1' ยังไม่ได้ต่อสาย</td>
+									<td>ขาเข้าที่ปล่อยว่างจะถูกอ่านเป็น <code>'0'</code></td>
+								</tr>
+								<tr>
+									<td><span class="chip warn">warn</span></td>
+									<td>ขา 'i1' ต่อกับสายที่ปลายลอย</td>
+									<td>เหมือนกับข้างบน แต่หลอกตาเพราะดูเหมือนต่อแล้ว</td>
+								</tr>
+								<tr>
+									<td><span class="chip warn">warn</span></td>
+									<td>รับนาฬิกาจากวงจร combinational</td>
+									<td>gated clock — ใช้ได้แต่ไม่ใช่แนวปฏิบัติที่ดีบน FPGA</td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
+
+					<div class="note trap">
+						<p class="lbl">อย่าข้ามขั้นนี้</p>
+						<p>โปรแกรมสร้างโค้ดให้แม้วงจรยังไม่สมบูรณ์ ถ้าปลายสายลอยอยู่ โค้ดจะคอมไพล์ผ่านใน Vivado
+							แต่ผลลัพธ์จะเป็นศูนย์ตลอด ให้ตรวจจน Issues ไม่เหลือสีแดงก่อนเสมอ</p>
+					</div>
+				</section>
+
+				<section id="man-s7">
+					<h2><span class="num">07</span> สร้าง VHDL</h2>
+					<p class="sub">กดปุ่ม <b>⚙ Generate VHDL</b> มุมขวาบน โค้ดจะขึ้นที่แท็บ VHDL</p>
+
+					<figure>
+						<img src="img/manual-09.png" alt="แท็บ VHDL แสดงโค้ด entity ที่สร้างจากวงจร">
+						<figcaption><b>รูปที่ 9</b><span>โค้ดที่ได้จากวงจรในรูปที่ 1 · ช่องด้านบนเลือกได้ว่าจะดู entity
+								ไหนหรือดูรวมทั้งหมด</span></figcaption>
+					</figure>
+
+					<ul class="plain">
+						<li><b>★ All entities (bundle for Vivado)</b> — รวมทุก entity ที่ใช้จริงไว้ในไฟล์เดียว
+							เหมาะกับการยัดเข้า Vivado ทีเดียวจบ</li>
+						<li>ปุ่ม <b>Copy</b> คัดลอกโค้ดไปวางที่อื่น</li>
+						<li>ปุ่ม <b>.vhd</b> ดาวน์โหลดเป็นไฟล์</li>
+					</ul>
+
+					<figure>
+						<img src="img/manual-10.png" alt="เมนู File เปิดอยู่ แสดงคำสั่งบันทึกโปรเจกต์และส่งออก VHDL">
+						<figcaption><b>รูปที่ 10</b><span>เมนู File รวมคำสั่งบันทึกโปรเจกต์ สร้าง schematic ใหม่ ตั้งแผ่น top
+								และส่งออก .vhd</span></figcaption>
+					</figure>
+
+					<div class="note good">
+						<p class="lbl">ชื่อไฟล์ไม่ชนกัน</p>
+						<p>ไฟล์ที่ดาวน์โหลดจะขึ้นต้นด้วยวันเวลา แล้วตามด้วยชื่อที่เหลือแต่ตัวอักษรกับตัวเลข ไม่มีเว้นวรรคและอักขระพิเศษ
+							เช่น <code class="mono">20260820185428myprojectall.vhd</code> โหลดซ้ำกี่ครั้งก็ไม่ทับกัน และพาธไม่พังตอน
+							Vivado เรียกใช้</p>
+					</div>
+
+					<h3>เอาเข้า Vivado</h3>
+					<ol class="steps">
+						<li>สร้างโปรเจกต์ Vivado เลือกบอร์ด/ชิป Spartan-7 ที่ใช้</li>
+						<li><b>Add Sources → Add or create design sources</b> แล้วเลือกไฟล์ <code>.vhd</code> ที่ดาวน์โหลดมา</li>
+						<li>ตั้ง entity ตัวบนสุดเป็น top — ชื่อ entity คือชื่อแผ่น top แบบตัวพิมพ์เล็ก อักขระพิเศษ/ช่องว่างกลายเป็น
+							<code>_</code> (แผ่น "My Top" ได้ entity <code>my_top</code>)</li>
+						<li>เพิ่มไฟล์ constraint (.xdc) กำหนดขาของบอร์ด แล้วสังเคราะห์</li>
+					</ol>
+				</section>
+
+				<section id="man-s8">
+					<h2><span class="num">08</span> หลายแผ่นและ sub-block</h2>
+					<p class="sub">วงจรใหญ่แบ่งเป็นหลาย schematic ได้ แล้วเรียกแผ่นหนึ่งมาใช้เป็นบล็อกในอีกแผ่นหนึ่ง เหมือน component ใน
+						VHDL</p>
+
+					<ol class="steps">
+						<li>กดปุ่ม <b>+</b> ที่หัวข้อ SCHEMATICS เพื่อสร้างแผ่นใหม่ แล้วตั้งชื่อ</li>
+						<li>วาดวงจรย่อยในแผ่นนั้น ขา INPUT/OUTPUT ของแผ่นจะกลายเป็นขาของบล็อก</li>
+						<li>กลับไปแผ่นที่ต้องการใช้ แล้วลากชื่อแผ่นจากหัวข้อ <b>USE AS SUB-BLOCK</b> มาวาง</li>
+					</ol>
+
+					<figure>
+						<img src="img/manual-11.png" alt="รายการ USE AS SUB-BLOCK แสดงแผ่น top เป็นสีจางพร้อมไอคอนกุญแจ">
+						<figcaption><b>รูปที่ 11</b><span>แผ่นที่ใช้เป็นบล็อกไม่ได้จะขึ้นเป็นสีจางพร้อมกุญแจ
+								ชี้เมาส์ค้างจะบอกเหตุผล</span></figcaption>
+					</figure>
+
+					<div class="note trap">
+						<p class="lbl">ทำไม top ใช้เป็น sub-block ไม่ได้</p>
+						<p>แผ่น top คือรากของวงจรทั้งหมด ถ้าเอาไปใส่ในแผ่นที่ top เรียกใช้อยู่ จะกลายเป็นวงวน — VHDL ที่ได้จะให้ top
+							เรียกตัวเอง และ Vivado จะ elaborate ไม่ผ่าน โปรแกรมจึงกันไว้ตั้งแต่ในรายการ รวมถึงแผ่นแม่ทุกใบที่จะทำให้เกิดวงวนด้วย
+						</p>
+					</div>
+				</section>
+
+				<section id="man-s9">
+					<h2><span class="num">09</span> บันทึก เปิด นำเข้า</h2>
+					<div class="tbl">
+						<table>
+							<thead>
+								<tr>
+									<th>งาน</th>
+									<th>วิธี</th>
+									<th>ไฟล์</th>
+								</tr>
+							</thead>
+							<tbody>
+								<tr>
+									<td class="k">บันทึกโปรเจกต์</td>
+									<td>File → Save Project หรือ <kbd>Ctrl</kbd>+<kbd>S</kbd></td>
+									<td class="k">.schproj.json</td>
+								</tr>
+								<tr>
+									<td class="k">เปิดโปรเจกต์</td>
+									<td>File → Open Project หรือ <kbd>Ctrl</kbd>+<kbd>O</kbd></td>
+									<td class="k">.schproj.json</td>
+								</tr>
+								<tr>
+									<td class="k">ส่งออกโค้ด</td>
+									<td>ปุ่ม .vhd ที่แท็บ VHDL หรือ File → Export VHDL</td>
+									<td class="k">.vhd</td>
+								</tr>
+								<tr>
+									<td class="k">นำเข้า VHDL</td>
+									<td>แผงซ้าย → IMPORT VHDL → เลือกไฟล์</td>
+									<td class="k">.vhd .vhdl .txt</td>
+								</tr>
+								<tr>
+									<td class="k">ใช้วงจรซ้ำ / ส่งต่อวงจร</td>
+									<td>Export .vhd — โปรแกรมแนบการจัดวางไว้ในคอมเมนต์ท้ายไฟล์ เปิดกลับด้วย IMPORT VHDL
+										ได้ผังเหมือนเดิม</td>
+									<td class="k">.vhd</td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
+					<p>โปรแกรมมี autosave ลงเบราว์เซอร์อยู่แล้ว (ดูสถานะที่แถบล่าง) แต่ autosave อยู่กับเครื่องและเบราว์เซอร์นั้น
+						<b>ต้อง Save Project เป็นไฟล์</b> ถ้าจะย้ายเครื่องหรือส่งงาน</p>
+					<p>การนำเข้า <code>.vhd</code> จะแปลงโค้ดกลับเป็นรูปวงจรให้อัตโนมัติ รองรับ combinational (and/or/not/xor…),
+						<code>process</code> → D-FF และ <code>when/else</code> → MUX</p>
+				</section>
+
+				<section id="man-s10">
+					<h2><span class="num">10</span> ธีมและมุมมอง</h2>
+					<figure>
+						<img src="img/manual-12.png" alt="เมนู View เปิดอยู่ แสดงคำสั่งซูมและตัวเลือกธีม">
+						<figcaption><b>รูปที่ 12</b><span>เมนู View — ซูม, ธีม และรูปแบบจุดตัดสาย</span></figcaption>
+					</figure>
+					<ul class="plain">
+						<li><b>ธีม: ISE (พื้นขาว)</b> — พื้นขาวแบบ Xilinx ISE เหมาะกับการพิมพ์และส่งรายงาน</li>
+						<li><b>ธีม: มืด (Studio)</b> — พื้นเข้ม สบายตาเวลาทำงานนาน (ภาพในคู่มือนี้ใช้ธีมนี้)</li>
+						<li><b>จุดตัดสาย</b> — สลับระหว่างเส้นตัดกันแบบเรียบ (แบบ ISE) กับแบบมีสะพานข้าม
+							(ระหว่างลากชิ้นส่วน/เลื่อนจอ และในแผ่นที่มีสายเกิน 160 เส้น โปรแกรมจะวาดแบบเรียบชั่วคราวเพื่อความลื่น)</li>
+					</ul>
+				</section>
+
+				<section id="man-s11">
+					<h2><span class="num">11</span> คีย์ลัด</h2>
+					<div class="tbl">
+						<table>
+							<thead>
+								<tr>
+									<th>คีย์</th>
+									<th>ทำอะไร</th>
+									<th>คีย์</th>
+									<th>ทำอะไร</th>
+								</tr>
+							</thead>
+							<tbody>
+								<tr>
+									<td class="k">W</td>
+									<td>เครื่องมือสาย</td>
+									<td class="k">Ctrl+Z</td>
+									<td>ย้อนกลับ</td>
+								</tr>
+								<tr>
+									<td class="k">N</td>
+									<td>ตั้งชื่อ net</td>
+									<td class="k">Ctrl+Shift+Z / Ctrl+Y</td>
+									<td>ทำซ้ำที่ย้อน</td>
+								</tr>
+								<tr>
+									<td class="k">B</td>
+									<td>Bus Tap</td>
+									<td class="k">Ctrl+A</td>
+									<td>เลือกทั้งแผ่น</td>
+								</tr>
+								<tr>
+									<td class="k">I</td>
+									<td>แปะ I/O marker</td>
+									<td class="k">Ctrl+C / Ctrl+V</td>
+									<td>คัดลอก / วาง (ข้ามแผ่นได้)</td>
+								</tr>
+								<tr>
+									<td class="k">R / Shift+R</td>
+									<td>หมุน 90° ตาม / ทวนเข็ม</td>
+									<td class="k">Ctrl+X</td>
+									<td>ตัด</td>
+								</tr>
+								<tr>
+									<td class="k">M</td>
+									<td>พลิกซ้ายขวา</td>
+									<td class="k">Ctrl+D</td>
+									<td>ทำซ้ำ</td>
+								</tr>
+								<tr>
+									<td class="k">Esc</td>
+									<td>ยกเลิก / กลับไปเครื่องมือเลือก</td>
+									<td class="k">Ctrl+S / Ctrl+O</td>
+									<td>บันทึก / เปิดโปรเจกต์</td>
+								</tr>
+								<tr>
+									<td class="k">Delete</td>
+									<td>ลบสิ่งที่เลือก</td>
+									<td class="k">Ctrl+N</td>
+									<td>โปรเจกต์ใหม่</td>
+								</tr>
+								<tr>
+									<td class="k">Enter</td>
+									<td>จบสายที่กำลังลาก</td>
+									<td class="k">Space + ลาก</td>
+									<td>เลื่อนจอ</td>
+								</tr>
+								<tr>
+									<td class="k">Backspace</td>
+									<td>ถอยจุดหักล่าสุด (ขณะลากสาย)</td>
+									<td class="k">Ctrl + ล้อ</td>
+									<td>ซูม</td>
+								</tr>
+								<tr>
+									<td class="k">ลูกศร</td>
+									<td>ขยับสิ่งที่เลือกทีละช่องกริด (ไม่ได้เลือกอะไร = เลื่อนมุมมอง)</td>
+									<td class="k">Home</td>
+									<td>ย่อให้เห็นทั้งวงจร</td>
+								</tr>
+								<tr>
+									<td class="k">F7</td>
+									<td>ตรวจวงจร</td>
+									<td class="k">—</td>
+									<td>—</td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
+				</section>
+
+				<section id="man-s12">
+					<h2><span class="num">12</span> กับดักที่เจอบ่อย</h2>
+					<p class="sub">ทั้งหมดนี้คือปัญหาที่วงจร "ดูถูก" แต่โค้ดออกมาผิด</p>
+
+					<h3>สายที่ดูเหมือนต่อแล้ว แต่ยังลอยอยู่</h3>
+					<p>อาการคือเอาต์พุตเป็นศูนย์ตลอด ทั้งที่ตรรกะข้างในถูกหมด ให้ดูโค้ดที่บรรทัดขับเอาต์พุต ถ้าเจอแบบนี้แปลว่ายังไม่ได้ต่อจริง
+					</p>
+					<pre>  <b>out_s &lt;= (others =&gt; '0');</b>   -- เอาต์พุตถูกยึดเป็นศูนย์ ไม่มีอะไรขับ
+  n1_o  &lt;= a and '0';           -- ขาเกตที่ปล่อยลอย ถูกอ่านเป็น 0</pre>
+					<p>กด <kbd>F7</kbd> แล้วดูข้อความ <span class="mono">ปลายสายลอย</span> โปรแกรมจะชี้ให้ว่าอยู่ตรงไหน</p>
+
+					<h3>A0 คือบิตต่ำสุด</h3>
+					<p>ในวงจรเปรียบเทียบและวงจรบิตทั้งหลาย <b>A0 คือ LSB</b> และเรียงจากบนลงล่างคือ A0, A1, A2, A3 ซึ่ง
+						<b>กลับทางกับที่เราเขียนเลขฐานสอง</b> (ที่เขียนบิตสูงไว้ซ้าย) ต่อสลับเมื่อไหร่ผลเปรียบเทียบจะผิดทันที
+						(ผิดเป็นบางค่า ไม่ใช่สลับ GT↔LT ทุกกรณี จึงสังเกตยาก)</p>
+
+					<h3>XNOR ที่ตั้งใจจะเป็น XOR</h3>
+					<p>ใน full adder ถ้าเผลอใช้ XNOR แทน XOR <b>ทั้งสองตัว</b> ผลบวกจะยังถูกทุกกรณี (การกลับสองครั้งหักล้างกัน) แต่
+						<b>ตัวทดจะผิด 3 จาก 8 กรณี</b> — ถ้าผลบวกถูกแต่ทดผิด ให้ไล่ดูเกตคู่นี้ก่อน (เปลี่ยนแค่ตัวเดียว ผลบวกจะผิดแทน)
+					</p>
+
+					<h3>flip-flop ที่ไม่มีนาฬิกา</h3>
+					<p>D-FF ที่ขา CLK ว่างจะไม่ถูกสร้างเป็นวงจรเลย เอาต์พุตจะกลายเป็นค่าคงที่ Issues จะฟ้องให้เป็น error</p>
+
+					<div class="note good">
+						<p class="lbl">นิสัยที่ช่วยได้มาก</p>
+						<p>กด <kbd>F7</kbd> ทุกครั้งก่อนกด Generate · จัดวางเสร็จแล้วกดล็อก · Save Project เป็นไฟล์ก่อนปิดเบราว์เซอร์
+							· อ่านชื่อสัญญาณในโค้ดเทียบกับผัง ถ้าชื่อไม่เปลี่ยนหลังแก้วงจร แปลว่ายังไม่ได้แก้จริง</p>
+					</div>
+				</section>
+
+				<section id="man-s13">
+					<h2><span class="num">13</span> Vivado หาบอร์ดไม่เจอ — สลับ driver ของบอร์ด</h2>
+					<p class="sub">เกิดหลังใช้โปรแกรม flash (FPGA_Builder_Package_V8) — โปรแกรมนั้นเปลี่ยน driver ของช่อง JTAG
+						บนบอร์ดไปใช้ของตัวเอง Vivado จึงมองไม่เห็นบอร์ดอีก</p>
+
+					<p>บอร์ดต่อคอมพิวเตอร์ผ่านชิป FTDI ซึ่งมีสองช่อง:
+						<b>Converter A</b> คือช่อง JTAG ที่ Vivado ใช้โปรแกรมชิป ส่วน <b>Converter B</b> เป็นพอร์ตอนุกรม
+						(อย่าไปยุ่งกับช่อง B)
+						โปรแกรม flash จะสลับ driver ของช่อง A ไปเป็น <b>Digilent USB Device</b>
+						ต้องสลับกลับเป็น <b>USB Serial Converter A</b> ก่อน Vivado ถึงจะเจอบอร์ด</p>
+
+					<figure>
+						<svg viewBox="0 0 760 236" role="img" style="display:block;width:100%;height:auto;background:var(--surface)"
+							aria-label="Device Manager สองสถานะ: Digilent USB Device กับ USB Serial Converter A">
+							<rect x="14" y="16" width="322" height="176" rx="8" fill="none" stroke="var(--line)" />
+							<text x="30" y="44" font-size="13" font-weight="700" fill="var(--danger)">หลังใช้โปรแกรม flash</text>
+							<text x="30" y="78" font-size="12.5" fill="var(--ink)">∨ Universal Serial Bus devices</text>
+							<rect x="42" y="90" width="270" height="26" rx="5" fill="var(--danger)" opacity="0.13" />
+							<text x="54" y="108" font-size="12.5" font-weight="600" fill="var(--danger)">Digilent USB Device</text>
+							<text x="30" y="150" font-size="11.5" fill="var(--muted)">Hardware Manager มองไม่เห็นบอร์ด</text>
+							<line x1="344" y1="104" x2="404" y2="104" stroke="var(--wire)" stroke-width="2.5" />
+							<path d="M404,104 l-9,-5.5 v11 z" fill="var(--wire)" />
+							<text x="374" y="88" font-size="11" text-anchor="middle" fill="var(--wire)">Update</text>
+							<text x="374" y="126" font-size="11" text-anchor="middle" fill="var(--wire)">driver</text>
+							<rect x="412" y="16" width="334" height="176" rx="8" fill="none" stroke="var(--ok)" />
+							<text x="428" y="44" font-size="13" font-weight="700" fill="var(--ok)">ที่ Vivado ใช้</text>
+							<text x="428" y="78" font-size="12.5" fill="var(--ink)">∨ Universal Serial Bus controllers</text>
+							<rect x="440" y="90" width="292" height="26" rx="5" fill="var(--ok)" opacity="0.13" />
+							<text x="452" y="108" font-size="12.5" font-weight="600" fill="var(--ok)">USB Serial Converter A</text>
+							<text x="452" y="140" font-size="12.5" fill="var(--ink)">USB Serial Converter B</text>
+							<text x="428" y="172" font-size="11.5" fill="var(--muted)">Auto Connect เจอบอร์ด</text>
+						</svg>
+						<figcaption><b>รูปที่ 13</b><span>สองสถานะของช่อง A ใน Device Manager — ซ้ายคือหลังโปรแกรม flash เปลี่ยน
+								driver, ขวาคือสถานะที่ Vivado ต้องการ (ไดอะแกรมประกอบ ไม่ใช่ภาพหน้าจอจริง)</span></figcaption>
+					</figure>
+
+					<h3>ขั้นตอนสลับกลับให้ Vivado เห็นบอร์ด</h3>
+					<ol class="steps">
+						<li>เสียบบอร์ดกับเครื่อง แล้วเปิด <b>Device Manager</b> (คลิกขวาที่ปุ่ม Start → Device Manager)</li>
+						<li>มองหาหมวด <b>Universal Serial Bus devices</b> → <b>Digilent USB Device</b>
+							(สภาพหลังโปรแกรม flash เปลี่ยน driver ไปแล้ว)</li>
+						<li>คลิกขวาที่อุปกรณ์นั้น → <b>Update driver</b></li>
+						<li>เลือก <b>Browse my computer for drivers</b></li>
+						<li>เลือก <b>Let me pick from a list of available drivers on my computer</b></li>
+						<li>ในรายการจะมีทั้ง Digilent USB Device และ USB Serial Converter — เลือก <b>USB Serial Converter
+								A</b> (ถ้ามีหลายเวอร์ชัน เลือกตัวเลขเวอร์ชันล่าสุด เช่น 2.12.36.20) → <b>Next</b></li>
+						<li>เสร็จแล้วอุปกรณ์จะย้ายไปอยู่ใต้ <b>Universal Serial Bus controllers</b> ชื่อ <b>USB Serial
+								Converter A</b> — ถอดสาย USB เสียบใหม่หนึ่งครั้ง</li>
+						<li>เปิด Vivado → <b>Open Hardware Manager → Open target → Auto Connect</b> จะเห็นบอร์ดแล้ว</li>
+					</ol>
+
+					<div class="note good">
+						<p class="lbl">สลับไปมาได้ตลอด ไม่ต้องติดตั้งอะไรใหม่</p>
+						<p>driver ทั้งสองตัวอยู่ในเครื่องอยู่แล้ว จะกลับไปใช้โปรแกรม flash อีกเมื่อไหร่
+							ก็ทำซ้ำขั้นตอนเดิมแต่เลือก <b>Digilent USB Device</b> แทน เสร็จงาน flash แล้วค่อยสลับกลับมาเป็น USB
+							Serial Converter A</p>
+					</div>
+
+					<div class="note trap">
+						<p class="lbl">ระวังสองจุด</p>
+						<p>หนึ่ง — แตะเฉพาะ <b>Converter A</b> เท่านั้น อย่าเปลี่ยน driver ของ Converter B
+							สอง — ถ้าในรายการขั้นที่ 6 ไม่มี USB Serial Converter A เลย แปลว่าเครื่องนั้นยังไม่มี FTDI driver —
+							ติดตั้ง CDM driver จาก ftdichip.com (หรือเสียบบอร์ดกับเครื่องที่เคยใช้ Vivado ได้ แล้วให้ Windows
+							Update ดึงให้) ก่อนค่อยทำซ้ำ</p>
+					</div>
+				</section>
+
+				<section id="man-s14">
+					<h2><span class="num">14</span> Preset กับ Clear ของ flip-flop</h2>
+					<p class="sub">flip-flop ทั้งสี่ตัวมีขาควบคุมแบบไม่รอนาฬิกา (asynchronous) — เปิดใช้ได้จาก Inspector</p>
+
+					<ol class="steps">
+						<li>คลิกเลือก flip-flop → ใน Inspector ติ๊ก <b>Async reset</b> (คือ clear) หรือ <b>Async preset</b></li>
+						<li>ขา <b>R</b> จะโผล่ที่ขอบล่างของบล็อก ส่วนขา <b>P</b> ที่ขอบบน</li>
+						<li>ต่อสายเข้าขานั้น — ทำงานแบบ <b>active-high</b> คือสัญญาณเป็น <code>'1'</code> เมื่อไหร่ทำงานทันที
+							ไม่รอสัญญาณนาฬิกา</li>
+					</ol>
+
+					<pre>  process(clk, rst)               <b>-- ขา async อยู่ใน sensitivity list → ไม่รอ clock</b>
+  begin
+    if rst = '1' then
+      q &lt;= '0';  qn &lt;= '1';       <b>-- clear: Q=0, Q̅=1</b>
+    elsif rising_edge(clk) then …</pre>
+
+					<p>ถ้าเปิดทั้งสองพร้อมกัน <b>reset มีสิทธิ์เหนือ preset</b> (ตามลำดับ if/elsif ในโค้ด)
+						แต่ Spartan-7 มี async control ได้ทางเดียวต่อ register โปรแกรมจึงเตือนให้เลือกอย่างใดอย่างหนึ่ง</p>
+
+					<h3>ต่อขา R / P เข้า VCC หรือ GND</h3>
+					<p>ต่อได้ทั้งสองแบบ และความหมายต่างกันคนละขั้ว — โปรแกรมแปลให้ตรงกับฮาร์ดแวร์จริง</p>
+					<div class="tbl">
+						<table>
+							<thead>
+								<tr>
+									<th>ต่อกับ</th>
+									<th>ความหมาย</th>
+									<th>โค้ดที่ได้</th>
+								</tr>
+							</thead>
+							<tbody>
+								<tr>
+									<td class="k">GND</td>
+									<td>กดค้างไว้ที่ไม่ทำงาน — เป็นการ tie-off ตามมาตรฐานสำหรับขาที่ไม่ใช้</td>
+									<td>register ธรรมดา ไม่มีกิ่ง async ใน process</td>
+								</tr>
+								<tr>
+									<td class="k">VCC</td>
+									<td>ทำงานค้างตลอด — flip-flop จำค่าอะไรไม่ได้เลย</td>
+									<td>ได้ค่าคงที่ (Q ค้างที่ 0 หรือ 1) ไม่มี process เลย พร้อมคำเตือน</td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
+
+					<div class="note good">
+						<p class="lbl">ต่อ GND ไว้ไม่ผิด</p>
+						<p>ใน ISE การต่อขา CLR/PRE ที่ไม่ใช้เข้า GND เป็นเรื่องปกติ เพื่อบอกว่า "ตั้งใจไม่ใช้"
+							ไม่ใช่ลืมต่อ โปรแกรมจึงขึ้นเป็นข้อสังเกตอธิบาย ไม่ใช่ error — จะปิดตัวเลือกใน Inspector ไปเลยก็ได้ผลเท่ากัน
+						</p>
+					</div>
+
+					<div class="note trap">
+						<p class="lbl">ต่อ VCC คือ flip-flop ตาย</p>
+						<p>ขา R ต่อ VCC → Q ค้างที่ 0 ตลอด · ขา P ต่อ VCC → Q ค้างที่ 1 ตลอด
+							โปรแกรมจะเตือนในแท็บ Issues และสร้างโค้ดเป็นค่าคงตามความจริง (Vivado ก็จะตัด register ทิ้งเหมือนกัน)
+							ถ้าตั้งใจจะ reset ตอนเริ่ม ให้ต่อกับปุ่มหรือสัญญาณ reset จริง ไม่ใช่ VCC</p>
+					</div>
+				</section>
+			</div>
+		</div>
+	</div>
 	<div class="toast-stack" id="toastStack"></div>
 
 	<script defer src="js/01-core.js"></script>

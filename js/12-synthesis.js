@@ -56,7 +56,7 @@ function combinationalLoops(sch) {
 		if (!s) return null;
 		return s.type === "JUNCTION" ? srcOf(s.id, "j", seen) : s;
 	};
-	const nodes = sch.components.filter(c => !["IN", "OUT", "VCC", "GND", "JUNCTION"].includes(c.type) && !SEQ_TYPES.has(c.type));
+	const nodes = sch.components.filter(c => !["IN", "OUT", "VCC", "GND", "CONST", "JUNCTION"].includes(c.type) && !SEQ_TYPES.has(c.type));
 	const idset = new Set(nodes.map(c => c.id));
 	const adj = new Map();
 	nodes.forEach(c => {
@@ -233,11 +233,15 @@ function runSynthesis() {
 				else if (hi > fw - 1) issues.push({
 					lvl: "err",
 					msg: width > 1
-						? `Bus Tap แตะช่วงบิต [${hi}:${bit}] แต่บัสมีช่วงแค่ [${fw - 1}:0]`
-						: `Bus Tap แตะบิต ${bit} แต่บัสมีช่วงแค่ [${fw - 1}:0]`, ref: sch.name, schId: sch.id, cid: tc.id
+						? `Bus Tap แตะช่วงบิต (${hi}:${bit}) แต่บัสมีช่วงแค่ (${fw - 1}:0)`
+						: `Bus Tap แตะบิต ${bit} แต่บัสมีช่วงแค่ (${fw - 1}:0)`, ref: sch.name, schId: sch.id, cid: tc.id
 				});
 				return;
 			}
+			// One bit into a WIDE gate is legal and deliberate: it is replicated across the
+			// bus (a select line masking a byte). Every other width difference is still an
+			// error — including a wide gate feeding a narrow sink.
+			if (fw === 1 && tw > 1 && ["AND", "OR", "NAND", "NOR", "XOR", "XNOR", "NOT", "BUF"].includes(tc.type)) return;
 			if (fw !== tw) {
 				issues.push({
 					lvl: "err",
@@ -258,7 +262,7 @@ function runSynthesis() {
 			}
 			return s;
 		};
-		const COMBI = c2 => c2 && !["IN", "VCC", "GND", "JUNCTION"].includes(c2.type) && !SEQ_TYPES.has(c2.type);
+		const COMBI = c2 => c2 && !["IN", "VCC", "GND", "CONST", "JUNCTION"].includes(c2.type) && !SEQ_TYPES.has(c2.type);
 		// flip-flop clock must be a real signal — a constant or missing clock makes the
 		// generated process unparseable (and the register meaningless); a clock that comes
 		// from other logic still builds but is a classic FPGA trap, so it is a warning
@@ -266,7 +270,7 @@ function runSynthesis() {
 			const src = srcOfPin(c.id, "clk");
 			if (!src)
 				issues.push({ lvl: "err", msg: `${compDisplay(c)} ขา 'clk' ยังไม่ได้ต่อสัญญาณนาฬิกา — flip-flop นี้จะไม่ถูกสร้าง`, ref: sch.name, schId: sch.id, cid: c.id });
-			else if (src.type === "VCC" || src.type === "GND")
+			else if (src.type === "VCC" || src.type === "GND" || src.type === "CONST")
 				issues.push({ lvl: "err", msg: `${compDisplay(c)} ขา 'clk' ต่อกับ ${src.type} (ค่าคงที่) — นาฬิกาต้องเป็นสัญญาณ ไม่ใช่ค่าคงที่`, ref: sch.name, schId: sch.id, cid: c.id });
 			else if (SEQ_TYPES.has(src.type))
 				issues.push({ lvl: "warn", msg: `${compDisplay(c)} ใช้เอาต์พุตของ ${compDisplay(src)} เป็นนาฬิกา (ripple counter) — บน FPGA สัญญาณนี้ไม่ได้อยู่บน clock network, Vivado จะเตือน CLOCK_DEDICATED_ROUTE และ skew สะสมทีละสเตจ; ทางที่ปลอดภัยคือใช้ clock เส้นเดียวกันทุกตัว แล้วคุมด้วยเงื่อนไข`, ref: sch.name, schId: sch.id, cid: c.id });

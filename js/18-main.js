@@ -117,6 +117,8 @@ function seedHalfAdder() {
 }
 
 function init() {
+	seedWorkspace();
+	applyTheme();
 	bindTabs();
 	bindMenus();
 	bindToolbar();

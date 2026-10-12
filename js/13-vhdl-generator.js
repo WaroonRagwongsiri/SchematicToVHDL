@@ -83,7 +83,9 @@ function generateSchVhdl(sch) {
 
 	const inputs = sch.components.filter(c => c.type === "IN");
 	const outputs = sch.components.filter(c => c.type === "OUT");
-	const inners = sch.components.filter(c => !["IN", "OUT", "VCC", "GND"].includes(c.type));
+	// CONST joins VCC/GND here: its output IS a literal, so allocating a signal for it
+	// would declare something nothing ever assigns
+	const inners = sch.components.filter(c => !["IN", "OUT", "VCC", "GND", "CONST"].includes(c.type));
 
 	// assign net names
 	const used = {};
@@ -208,6 +210,7 @@ function generateSchVhdl(sch) {
 		if (src.type === "IN") return src._net;
 		if (src.type === "VCC") return "STD_LOGIC'('1')";
 		if (src.type === "GND") return "STD_LOGIC'('0')";
+		if (src.type === "CONST") return constVhdl(src.params || {});
 		if (src.type === "JUNCTION") {
 			if (src._busSig) return src._busSig;                            // floating named bus
 			return driver(src.id, "j", visited);                          // transparent
@@ -278,10 +281,99 @@ function generateSchVhdl(sch) {
 			}
 			return v;
 		};
+		/* A driver string may be a LITERAL — from an unwired pin (zlit) or a GND/VCC/CONST
+		   tie-off. Two places must never receive one:
+		    (a) a clock / async control: it lands in process(...) and rising_edge(...),
+		        where VHDL demands a signal name — the file then does not even parse.
+		    (b) the left side of a comparison: `'0' = '0'` is ambiguous ("=" is declared
+		        for CHARACTER, BIT and STD_ULOGIC), the error family students lose hours to.
+		   Note the bus form `(others => '0')` counts as a literal here too. */
+		const isLit = v => typeof v === "string" && (/^'[01]'$/.test(v) || /^\(others\s*=>\s*'[01]'\)$/.test(v)
+			|| /^x"[0-9A-Fa-f]+"$/.test(v) || /^"[01]+"$/.test(v));
+		// comparison that stays legal when the driver is constant: fold it right here
+		const eq = (v, bit) => {
+			if (!isLit(v)) return `${v} = '${bit}'`;
+			const one = /'1'/.test(v);
+			return (one === (String(bit) === "1")) ? "true" : "false";
+		};
+		// a clock pin MUST be a real signal; null => caller must not emit the process
+		const ffClock = () => {
+			const v = driver(c.id, "clk");
+			if (!v || isLit(v)) {
+				warns.push(`${compDisplay(c)} ขา 'clk' ${v ? "ต่อกับค่าคงที่ (GND/VCC)" : "ยังไม่ได้ต่อสาย"} — flip-flop ต้องมีสัญญาณนาฬิกา จึงข้ามการสร้างวงจรนี้`);
+				return null;
+			}
+			return v;
+		};
+		/* CLR / PRE tied to a CONSTANT is ordinary schematic practice, and the two levels
+		   say opposite things. These pins are ACTIVE HIGH here, so:
+		     GND ('0') — held inactive. That is the classic ISE tie-off for an async pin you
+		                 do not want; the branch simply is not emitted, and the register is
+		                 a plain one. Worth saying once, but nothing is wrong.
+		     VCC ('1') — held asserted forever, so the register can never change: the output
+		                 is a constant. `heldAsync` records it and the caller emits that
+		                 constant instead of a process that cannot do anything.
+		   Either way the literal must never reach the returned value: it would land in
+		   process(...) where VHDL accepts signal names only, and the file would not parse. */
+		const heldAsync = [];
+		const asyncCtrl = (pid, enabled) => {
+			if (!enabled) return null;
+			const v = driver(c.id, pid);
+			if (!v) { warns.push(`${compDisplay(c)} เปิด async ${pid} แต่ขา ${pid} ไม่ได้ต่อสาย — ข้าม ${pid} ในโค้ด`); return null; }
+			if (isLit(v)) {
+				if (/'1'/.test(v)) heldAsync.push(pid);
+				else warns.push(`${compDisplay(c)} ขา '${pid}' ต่อไว้กับ GND — async ${pid} จึงไม่ทำงานตลอด (เท่ากับไม่เปิดใช้) — ถูกต้องตามแบบ tie-off`);
+				return null;
+			}
+			return v;
+		};
+		/* Q̄ is usually left unconnected on a drawing; declaring and driving it anyway only
+		   adds "unused signal" noise to the Vivado log, so drop it when nothing reads it. */
+		const ffQn = () => {
+			const used = sch.wires.some(w => w.from.cid === c.id && w.from.pid === "qn");
+			if (!used) delete c._nets.qn;
+			return used ? c._nets.qn : null;
+		};
+		/* A CLR/PRE wired to VCC never releases — Q is stuck at the value that pin forces.
+		   Emitting the register anyway would be a lie (and Vivado would optimise it away),
+		   so drive the constant and say why. Reset wins over preset, as in the process. */
+		const holdOutputs = () => {
+			const q = heldAsync.includes("rst") ? "0" : "1";
+			const qn = q === "0" ? "1" : "0";
+			const pin = heldAsync.includes("rst") ? "rst" : "pre";
+			warns.push(`${compDisplay(c)} ขา '${pin}' ต่อไว้กับ VCC — async ${pin} ทำงานค้างตลอด flip-flop จึงถูกกดค้างที่ Q='${q}' ไม่จำค่าอะไรเลย`);
+			concurrent.push(`  ${c._nets.q} <= '${q}';`);
+			const QN = ffQn();
+			if (QN) concurrent.push(`  ${QN} <= '${qn}';`);
+		};
+		// when a flip-flop is skipped, still give its outputs a defined value so the rest
+		// of the design elaborates instead of collapsing into undriven-signal noise
+		const tieOffOutputs = () => {
+			Object.keys(c._nets || {}).forEach(pid => concurrent.push(`  ${c._nets[pid]} <= ${zlit((c._netW && c._netW[pid]) || 1)};`));
+		};
+		/* AMD UG901: most current FPGA families (Spartan-7 included) give a register ONE
+		   asynchronous control. Asking for async reset AND preset costs extra logic or
+		   fails outright, so say it out loud rather than emitting a register that will
+		   not map. */
+		const warnBothAsync = (RST, PRE) => {
+			if (RST && PRE) warns.push(`${compDisplay(c)} เปิดทั้ง async reset และ preset พร้อมกัน — FPGA (Spartan-7) มี async control ได้ทางเดียว ควรเลือกอย่างใดอย่างหนึ่ง`);
+		};
 
 		/* ----- gates ----- */
 		if (["AND", "OR", "NAND", "NOR", "XOR", "XNOR", "NOT", "BUF"].includes(c.type)) {
-			const ins = inputsPorts.map(p => driverFor(p.id));
+			/* On a WIDE gate every operand must be exactly that wide: VHDL has no
+			   "vector and bit". A single bit arriving at a wide gate is the ordinary
+			   idiom — one select or enable line masking a whole byte — so replicate it
+			   across the width, written as a qualified aggregate so no tool has to guess
+			   the type. An unwired pin is handled here too: `(others => '0')` is not
+			   legal as an operand on its own. */
+			const gw = gateWidth(c.params || {});
+			const ins = inputsPorts.map(p => {
+				const v = driverFor(p.id);
+				if (gw < 2) return v;
+				if (/^\(others\s*=>\s*'0'\)$/.test(v)) return `std_logic_vector'(${gw - 1} downto 0 => '0')`;
+				return (driverWidth(c.id, p.id) || 1) > 1 ? v : `std_logic_vector'(${gw - 1} downto 0 => ${v})`;
+			});
 			concurrent.push(`  ${c._nets.o} <= ${TYPES[c.type].expr(ins)};`);
 			return;
 		}
@@ -394,88 +486,120 @@ function generateSchVhdl(sch) {
 		}
 		/* ----- D-FF ----- */
 		if (c.type === "DFF") {
+			const CLK = ffClock();
+			if (!CLK) { tieOffOutputs(); return; }      // no clock → emit nothing unparseable
+			const RST = asyncCtrl("rst", c.params.reset);
+			const PRE = asyncCtrl("pre", c.params.preset);
+			warnBothAsync(RST, PRE);
+			if (heldAsync.length) { holdOutputs(); return; }   // CLR/PRE on VCC — Q is a constant
 			const D = driverFor("d");
-			// clk must NEVER fall back to a literal: process('0') / rising_edge('0')
-			// is not valid VHDL (rising_edge requires an actual signal, not a
-			// constant). If clk isn't wired, skip this flip-flop instead of
-			// emitting a literal into the sensitivity list.
-			const CLK = driver(c.id, "clk");
-			if (!CLK) { warns.push(`${compDisplay(c)} ขา 'clk' ยังไม่ได้ต่อสาย — ข้าม flip-flop นี้ในโค้ด (ต่อสัญญาณนาฬิกาก่อนสร้าง VHDL)`); return; }
-			// unwired rst/pre must NOT reach the sensitivity list as a literal
-			const RST = c.params.reset ? driver(c.id, "rst") : null;
-			const PRE = c.params.preset ? driver(c.id, "pre") : null;
-			if (c.params.reset && !RST) warns.push(`${compDisplay(c)} เปิด async reset แต่ขา rst ไม่ได้ต่อสาย — ข้าม reset ในโค้ด`);
-			if (c.params.preset && !PRE) warns.push(`${compDisplay(c)} เปิด async preset แต่ขา pre ไม่ได้ต่อสาย — ข้าม preset ในโค้ด`);
+			const QN = ffQn();
+			const set2 = (q, qn) => `      ${c._nets.q}  <= ${q};` + (QN ? `\n      ${QN} <= ${qn};` : "");
 			processes.push({
 				clk: CLK, edge: c.params.edge,
 				rst: RST, pre: PRE,
-				body: `      ${c._nets.q}  <= ${D};\n      ${c._nets.qn} <= not (${D});`,
-				rstAssign: `      ${c._nets.q}  <= '0';\n      ${c._nets.qn} <= '1';`,
-				preAssign: `      ${c._nets.q}  <= '1';\n      ${c._nets.qn} <= '0';`,
+				body: set2(D, `not (${D})`),
+				rstAssign: set2("'0'", "'1'"),
+				preAssign: set2("'1'", "'0'"),
 			});
 			return;
 		}
 		/* ----- JK-FF ----- */
 		if (c.type === "JKFF") {
+			const CLK = ffClock();
+			if (!CLK) { tieOffOutputs(); return; }
+			const RST = asyncCtrl("rst", c.params.reset);
+			const PRE = asyncCtrl("pre", c.params.preset);
+			warnBothAsync(RST, PRE);
+			if (heldAsync.length) { holdOutputs(); return; }
 			const J = driverFor("j");
 			const K = driverFor("k");
-			const CLK = driver(c.id, "clk");
-			if (!CLK) { warns.push(`${compDisplay(c)} ขา 'clk' ยังไม่ได้ต่อสาย — ข้าม flip-flop นี้ในโค้ด (ต่อสัญญาณนาฬิกาก่อนสร้าง VHDL)`); return; }
-			const RST = c.params.reset ? driver(c.id, "rst") : null;
-			const PRE = c.params.preset ? driver(c.id, "pre") : null;
-			if (c.params.reset && !RST) warns.push(`${compDisplay(c)} เปิด async reset แต่ขา rst ไม่ได้ต่อสาย — ข้าม reset ในโค้ด`);
-			if (c.params.preset && !PRE) warns.push(`${compDisplay(c)} เปิด async preset แต่ขา pre ไม่ได้ต่อสาย — ข้าม preset ในโค้ด`);
+			const QN = ffQn();
 			const qsig = c._nets.q;
-			processes.push({
-				clk: CLK, edge: c.params.edge,
-				rst: RST, pre: PRE,
+			const put = (q, qn) => `      ${qsig} <= ${q};` + (QN ? ` ${QN} <= ${qn};` : "");
+			// J/K wired to constants (VCC/GND/CONST) is how a toggle/counter stage is drawn —
+			// resolve it here so the student reads "q <= not q" instead of three dead
+			// branches guarded by true/false
+			let body;
+			if (isLit(J) && isLit(K)) {
+				const j1 = /'1'/.test(J), k1 = /'1'/.test(K);
+				body = (j1 && k1) ? put(`not ${qsig}`, qsig)
+					: (j1 && !k1) ? put("'1'", "'0'")
+						: (!j1 && k1) ? put("'0'", "'1'")
+							: "      null;   -- J=K='0' → hold";
+			} else {
 				// qn is assigned in every branch from the same pre-edge value of q,
 				// so q/qn always stay complementary after the edge
-				body:
-					`      if    (${J}='0' and ${K}='1') then ${qsig} <= '0'; ${c._nets.qn} <= '1';
-      elsif (${J}='1' and ${K}='0') then ${qsig} <= '1'; ${c._nets.qn} <= '0';
-      elsif (${J}='1' and ${K}='1') then ${qsig} <= not ${qsig}; ${c._nets.qn} <= ${qsig};
-      end if;`,
-				rstAssign: `      ${qsig} <= '0';\n      ${c._nets.qn} <= '1';`,
-				preAssign: `      ${qsig} <= '1';\n      ${c._nets.qn} <= '0';`
+				body =
+					`      if    (${eq(J, 0)} and ${eq(K, 1)}) then ${put("'0'", "'1'").trim()}
+      elsif (${eq(J, 1)} and ${eq(K, 0)}) then ${put("'1'", "'0'").trim()}
+      elsif (${eq(J, 1)} and ${eq(K, 1)}) then ${put(`not ${qsig}`, qsig).trim()}
+      end if;`;
+			}
+			processes.push({
+				clk: CLK, edge: c.params.edge,
+				rst: RST, pre: PRE, body,
+				rstAssign: `      ${qsig} <= '0';` + (QN ? `\n      ${QN} <= '1';` : ""),
+				preAssign: `      ${qsig} <= '1';` + (QN ? `\n      ${QN} <= '0';` : "")
 			});
 			return;
 		}
 		/* ----- T-FF ----- */
 		if (c.type === "TFF") {
+			const CLK = ffClock();
+			if (!CLK) { tieOffOutputs(); return; }
+			const RST = asyncCtrl("rst", c.params.reset);
+			const PRE = asyncCtrl("pre", c.params.preset);
+			warnBothAsync(RST, PRE);
+			if (heldAsync.length) { holdOutputs(); return; }
 			const T = driverFor("t");
-			const CLK = driver(c.id, "clk");
-			if (!CLK) { warns.push(`${compDisplay(c)} ขา 'clk' ยังไม่ได้ต่อสาย — ข้าม flip-flop นี้ในโค้ด (ต่อสัญญาณนาฬิกาก่อนสร้าง VHDL)`); return; }
-			const RST = c.params.reset ? driver(c.id, "rst") : null;
-			const PRE = c.params.preset ? driver(c.id, "pre") : null;
-			if (c.params.reset && !RST) warns.push(`${compDisplay(c)} เปิด async reset แต่ขา rst ไม่ได้ต่อสาย — ข้าม reset ในโค้ด`);
-			if (c.params.preset && !PRE) warns.push(`${compDisplay(c)} เปิด async preset แต่ขา pre ไม่ได้ต่อสาย — ข้าม preset ในโค้ด`);
+			const QN = ffQn();
 			const qsig = c._nets.q;
-			const qnsig = c._nets.qn;
+			// on a toggle both read the OLD q: new q = not q, new qn = old q = not(new q)
+			const tog = `${qsig} <= not ${qsig};` + (QN ? ` ${QN} <= ${qsig};` : "");
+			const body = isLit(T)
+				? (/'1'/.test(T) ? `      ${tog}` : "      null;   -- T='0' → hold")
+				: `      if (${eq(T, 1)}) then ${tog} end if;`;
 			processes.push({
 				clk: CLK, edge: c.params.edge,
-				rst: RST, pre: PRE,
-				// both q and qn toggle together on T=1 and hold together on T=0,
-				// so they stay complementary without needing an else branch
-				body: `      if (${T}='1') then ${qsig} <= not ${qsig}; ${qnsig} <= not ${qnsig}; end if;`,
-				rstAssign: `      ${qsig} <= '0';\n      ${qnsig} <= '1';`,
-				preAssign: `      ${qsig} <= '1';\n      ${qnsig} <= '0';`,
+				rst: RST, pre: PRE, body,
+				rstAssign: `      ${qsig} <= '0';` + (QN ? `
+      ${QN} <= '1';` : ""),
+				preAssign: `      ${qsig} <= '1';` + (QN ? `
+      ${QN} <= '0';` : ""),
 			});
 			return;
 		}
 		/* ----- SR-FF ----- */
 		if (c.type === "SRFF") {
+			const CLK = ffClock();
+			if (!CLK) { tieOffOutputs(); return; }
+			const RST = asyncCtrl("rst", c.params.reset);
+			const PRE = asyncCtrl("pre", c.params.preset);
+			warnBothAsync(RST, PRE);
+			if (heldAsync.length) { holdOutputs(); return; }
 			const S = driverFor("s");
 			const R = driverFor("r");
-			const CLK = driver(c.id, "clk");
-			if (!CLK) { warns.push(`${compDisplay(c)} ขา 'clk' ยังไม่ได้ต่อสาย — ข้าม flip-flop นี้ในโค้ด (ต่อสัญญาณนาฬิกาก่อนสร้าง VHDL)`); return; }
+			const QN = ffQn();
 			const qsig = c._nets.q;
+			const put = (q, qn) => `${qsig} <= ${q};` + (QN ? ` ${QN} <= ${qn};` : "");
+			let body;
+			if (isLit(S) && isLit(R)) {
+				const s1 = /'1'/.test(S), r1 = /'1'/.test(R);
+				body = (s1 && !r1) ? `      ${put("'1'", "'0'")}`
+					: (!s1 && r1) ? `      ${put("'0'", "'1'")}`
+						: "      null;   -- S/R เป็นค่าคงที่ที่ไม่เปลี่ยนสถานะ → hold";
+			} else {
+				body =
+					`      if    (${eq(S, 1)} and ${eq(R, 0)}) then ${put("'1'", "'0'")}
+      elsif (${eq(S, 0)} and ${eq(R, 1)}) then ${put("'0'", "'1'")}
+      end if;`;
+			}
 			processes.push({
 				clk: CLK, edge: c.params.edge,
-				body:
-					`      if    (${S}='1' and ${R}='0') then ${qsig} <= '1'; ${c._nets.qn} <= '0';
-      elsif (${S}='0' and ${R}='1') then ${qsig} <= '0'; ${c._nets.qn} <= '1';
-      end if;`
+				rst: RST, pre: PRE, body,
+				rstAssign: `      ${qsig} <= '0';` + (QN ? `\n      ${QN} <= '1';` : ""),
+				preAssign: `      ${qsig} <= '1';` + (QN ? `\n      ${QN} <= '0';` : "")
 			});
 			return;
 		}
@@ -754,6 +878,7 @@ function generateVHDL() {
 		});
 		sel.innerHTML = opts.join("");
 		sel.value = "__all__";
+		syncSelTitle(sel);
 		showVhdlFor("__all__", all);
 		setRightTab("vhdl");
 		// surface generator warnings in the Issues tab instead of dropping them
@@ -802,8 +927,16 @@ function vhdlHighlight(code) {
 	}).join("\n");
 }
 $("#vhdlEntitySel")?.addEventListener("change", ev => {
+	syncSelTitle(ev.target);
 	showVhdlFor(ev.target.value);
 });
+/* the entity box is narrow enough to clip its longest label — keep the whole thing
+   readable on hover, and follow the selection */
+function syncSelTitle(sel) {
+	if (!sel) return;
+	const o = sel.options[sel.selectedIndex];
+	sel.title = o ? o.text : "";
+}
 /* base64 an arbitrary UTF-8 string (schematic JSON can contain Thai labels) —
    chunk-free: ids/coords stay small so this never hits a call-stack limit. */
 function utf8ToB64(s) {
@@ -837,8 +970,8 @@ function exportVhdlFile() {
 	if (!code) { toast("ยังไม่มีโค้ดให้ดาวน์โหลด — กด Generate VHDL ก่อน", "warn"); return; }
 	const v = $("#vhdlEntitySel").value || "top";
 	let fname;
-	if (v === "__all__") fname = sanId(state.project.name || "project") + "_all.vhd";
-	else fname = sanId(v) + ".vhd";
+	if (v === "__all__") fname = dlName(state.project.name || "project", "_all.vhd", "project");
+	else fname = dlName(v, ".vhd", "top");
 	const b = new Blob([code + layoutStamp()], { type: "text/plain" });
 	const u = URL.createObjectURL(b);
 	const a = document.createElement("a");
@@ -857,6 +990,6 @@ function exportAllVhdl() {
 	const b = new Blob([bundle], { type: "text/plain" });
 	const u = URL.createObjectURL(b);
 	const a = document.createElement("a");
-	a.href = u; a.download = sanId($("#projectName").value) + "_all.vhd"; a.click();
+	a.href = u; a.download = dlName($("#projectName").value, "_all.vhd", "project"); a.click();
 	URL.revokeObjectURL(u);
 }

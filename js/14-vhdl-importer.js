@@ -227,7 +227,8 @@ function readLayoutStamp(text) {
    and every sub-block ("SCH:<id>") / custom-component ("CUSTOM:<name>") reference
    repointed to match. Restoring customs too (the stamp carries them) avoids the
    dangling "CUSTOM:<name>" a schematic-only restore would otherwise leave behind. */
-function adoptSchematics(list, customs) {
+function adoptSchematics(list, customs, target) {
+	target = target || state.project;
 	const idMap = new Map();
 	list.forEach(s => { if (s && s.id) idMap.set(s.id, uid("sch")); });
 	// merge stamped customs first (collision → same rename pattern importCustomComponent
@@ -236,7 +237,7 @@ function adoptSchematics(list, customs) {
 	if (customs) Object.values(customs).forEach(cc => {
 		if (!cc || !cc.name) return;
 		let nm = cc.name, k = 1;
-		while (state.project.customs[nm]) nm = cc.name + "_" + (k++);
+		while (target.customs[nm]) nm = cc.name + "_" + (k++);
 		nameMap.set(cc.name, nm);
 	});
 	if (customs) Object.values(customs).forEach(cc => {
@@ -249,14 +250,14 @@ function adoptSchematics(list, customs) {
 				if (nameMap.has(dep)) c.type = "CUSTOM:" + nameMap.get(dep);
 			}
 		});
-		state.project.customs[ncc.name] = ncc;
+		target.customs[ncc.name] = ncc;
 	});
 	const added = [];
 	list.forEach(s => {
 		if (!s || !Array.isArray(s.components)) return;
 		const ns = JSON.parse(JSON.stringify(s));
 		ns.id = idMap.get(s.id) || uid("sch");
-		ns.name = uniqueSchName(s.name || "imported", ns.id);
+		ns.name = uniqueSchName(s.name || "imported", ns.id, target);
 		const cmap = new Map();
 		ns.components.forEach(c => {
 			const nid = uid("c"); cmap.set(c.id, nid); c.id = nid;
@@ -273,7 +274,7 @@ function adoptSchematics(list, customs) {
 		});
 		const live = new Set(ns.components.map(c => c.id));
 		ns.wires = (ns.wires || []).filter(w => live.has(w.from.cid) && live.has(w.to.cid));
-		state.project.schematics[ns.id] = ns;
+		target.schematics[ns.id] = ns;
 		added.push(ns);
 	});
 	return added;
