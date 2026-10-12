@@ -15,6 +15,10 @@ function serialize() {
 		state.projects = { [state.project.id]: state.project };
 		state.activeProjectId = state.project.id;
 	}
+	// a safety net alongside the one in snapshot(): guarantees what's written to
+	// disk always has every sheet's IN/OUT order matching the drawing, even for a
+	// project that reached this point without going through snapshot() first
+	Object.values(state.projects).forEach(normalizeIOOrder);
 	// version 2 carries the whole workspace. `project` is still written out as the
 	// ACTIVE one so a file from here stays readable by anything expecting version 1.
 	return JSON.stringify({

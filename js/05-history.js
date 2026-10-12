@@ -3,6 +3,10 @@
 function snapshot() {
 	if (state.history.muted) return;
 
+	// every commit to history keeps each sheet's IN/OUT array order matching the
+	// drawing, so what gets persisted (and later saved to disk) already agrees
+	normalizeIOOrder(state.project);
+
 	const serialized = JSON.stringify({
 		p: state.project,
 		a: state.activeId,

@@ -667,23 +667,50 @@ function getPort(c, pid) { return getPorts(c).find(p => p.id === pid); }
    the entity itself, its component declaration, the port-map formals, and the
    drawn block's pins — derives from here, so an IN and an OUT sharing a name
    become foo / foo_1 consistently instead of a duplicate/ mismatched formal. */
+/* PIN ORDER FOLLOWS THE DRAWING: top-to-bottom, then left-to-right. Shared by
+   schPortList() (how a sub-block's pins are derived) and reorderIOByPosition()
+   (how a schematic's OWN component array is kept in step with it — see there). */
+function ioPosOrder(a, b) { return (a.y - b.y) || (a.x - b.x); }
 function schPortList(sch) {
 	const used = {};
 	const uq = b => { let n = sanId(b) || "net", i = 1; while (used[n]) n = sanId(b) + "_" + (i++); used[n] = 1; return n; };
 	const out = [];
-	/* PIN ORDER FOLLOWS THE DRAWING. The pins used to come out in the order the IN/OUT
-	   blocks happened to be CREATED in — a sequence that is invisible on screen, so a
-	   block ended up with its pins in an order nobody chose (sel0, sel1, sel3 landing
-	   between in7 and in8, sel2 at the very bottom). Sorting by position instead makes
-	   the layout the control: arrange the port blocks on the sub-sheet top to bottom the
-	   way you want them on the symbol, and the symbol follows. Ids are unaffected, so
-	   nothing a parent has wired comes loose — the pins only move. */
-	const byPos = (a, b) => (a.y - b.y) || (a.x - b.x);
-	(sch.components || []).filter(c => c.type === "IN").slice().sort(byPos)
+	/* The pins used to come out in the order the IN/OUT blocks happened to be CREATED
+	   in — a sequence that is invisible on screen, so a block ended up with its pins
+	   in an order nobody chose (sel0, sel1, sel3 landing between in7 and in8, sel2 at
+	   the very bottom). Sorting by position instead makes the layout the control:
+	   arrange the port blocks on the sub-sheet top to bottom the way you want them on
+	   the symbol, and the symbol follows. Ids are unaffected, so nothing a parent has
+	   wired comes loose — the pins only move. */
+	(sch.components || []).filter(c => c.type === "IN").slice().sort(ioPosOrder)
 		.forEach(c => out.push({ cid: c.id, id: uq(c.params.name || "in"), name: c.params.name, dir: "in", width: c.params.width || 1 }));
-	(sch.components || []).filter(c => c.type === "OUT").slice().sort(byPos)
+	(sch.components || []).filter(c => c.type === "OUT").slice().sort(ioPosOrder)
 		.forEach(c => out.push({ cid: c.id, id: uq(c.params.name || "out"), name: c.params.name, dir: "out", width: c.params.width || 1 }));
 	return out;
+}
+/* schPortList() above only sorts a DERIVED view — a sub-block's own pin list, when
+   OTHER sheets instantiate it. It does not touch sch.components itself, so this
+   schematic's OWN top-level entity (generateSchVhdl, which — like legacy
+   schematic&bus2vhdl.html — declares its ports straight off sch.components, in
+   whatever order they sit in the array) can still show a port order that does not
+   match the drawing, and a project saved here can show a DIFFERENT order than the
+   same file reopened in the legacy tool once components get rearranged by hand.
+   Re-sorting the array itself — not just a derived list — keeps both in lockstep.
+   Only IN and OUT components move, and only among themselves (each keeps its
+   existing SLOT in the array, so nothing else's relative order shifts); ids are
+   untouched, so no wire goes stale. */
+function reorderIOByPosition(sch) {
+	if (!sch || !Array.isArray(sch.components)) return;
+	const comps = sch.components;
+	const reorderGroup = type => {
+		const idxs = [];
+		comps.forEach((c, i) => { if (c.type === type) idxs.push(i); });
+		if (idxs.length < 2) return;
+		const sorted = idxs.map(i => comps[i]).sort(ioPosOrder);
+		idxs.forEach((i, k) => { comps[i] = sorted[k]; });
+	};
+	reorderGroup("IN");
+	reorderGroup("OUT");
 }
 function customPorts(cc) {
 	// new format: cc.schematic — use the shared, deduped list (name kept for the API)

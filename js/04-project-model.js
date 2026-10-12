@@ -22,6 +22,37 @@ function rewriteInstanceType(from, to) {
 	Object.values(state.project.schematics).forEach(walk);
 	Object.values(state.project.customs).forEach(cc => walk(cc.schematic));
 }
+/* Keeps every sheet's own IN/OUT order (see reorderIOByPosition, js/02-types.js) in
+   step with how they're actually drawn — run before anything gets WRITTEN OUT
+   (undo/redo snapshot, project save) so a schematic rearranged by dragging pins
+   around persists in that same order, and reopening the file — here or in the
+   legacy schematic&bus2vhdl.html, which also just reads a sheet's own port order
+   straight off its component array — shows the same order either way. */
+/* JS preserves an object's KEY INSERTION ORDER, and JSON.stringify/JSON.parse carry
+   it straight through to a saved file and back. schOrder (see orderedSchIds) is a
+   separate array that only steers this version's own TREE display after a drag —
+   dragging a sheet never touches the `schematics` object's own key order, so the
+   saved file still has its sheets in creation order underneath. Invisible here
+   (the tree reads schOrder, not the object), but the legacy
+   schematic&bus2vhdl.html has no schOrder at all: its tree just reads
+   Object.keys(schematics) straight off the file, so it shows the OLD order no
+   matter how the sheets were dragged around here. Rebuilding the object with keys
+   inserted in schOrder's order fixes that — the plain object-key order now already
+   IS the arranged order, for any reader that only knows how to look at that. */
+function normalizeSchObjectOrder(proj) {
+	if (!proj || !proj.schematics) return;
+	const order = orderedSchIds(proj);
+	const rebuilt = {};
+	order.forEach(id => { rebuilt[id] = proj.schematics[id]; });
+	proj.schematics = rebuilt;
+}
+function normalizeIOOrder(proj) {
+	const P = proj || state.project;
+	if (!P) return;
+	normalizeSchObjectOrder(P);
+	Object.values(P.schematics || {}).forEach(reorderIOByPosition);
+	Object.values(P.customs || {}).forEach(cc => { if (cc.schematic) reorderIOByPosition(cc.schematic); });
+}
 /* Auto-weld: a dangling wire end (free-endpoint junction, 1 wire) that lands
    exactly on top of another wire — or on another dangling end — is what the
    user means to CONNECT. Turn it into a real solid junction (split the host
