@@ -1440,12 +1440,6 @@ textarea:focus {
 .pin-table select {
 	width: 100%
 }
-.pin-table .pp {
-	font-size: 10.5px;
-	color: var(--muted);
-	margin-top: 2px;
-	word-break: break-word
-}
 .pin-table.sum td:first-child {
 	color: var(--ink-dim);
 	width: 80px

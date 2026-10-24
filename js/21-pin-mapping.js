@@ -231,8 +231,11 @@ function pinOptionsFor(port, cur) {
 		} else if (port.width === 1) {
 			s.bits.forEach(b => opts.push({ v: `${s.name}:${b.i}`, t: `${s.name}[${b.i}] (${b.pin})` }));
 		} else {
-			for (let lo = 0; lo + port.width <= s.bits.length; lo++)
-				opts.push({ v: `${s.name}:${lo}`, t: `${s.name}[${lo + port.width - 1}:${lo}]` });
+			// a bus slot lists its package pins MSB first
+			for (let lo = 0; lo + port.width <= s.bits.length; lo++) {
+				const pinList = s.bits.slice(lo, lo + port.width).map(b => b.pin).reverse().join(" ");
+				opts.push({ v: `${s.name}:${lo}`, t: `${s.name}[${lo + port.width - 1}:${lo}] (${pinList})` });
+			}
 		}
 		if (!opts.length) return;
 		if (!groups.has(s.group)) groups.set(s.group, []);
@@ -259,13 +262,10 @@ function renderPinPanel() {
 	const topName = (state.project.schematics[state.project.topId] || {}).name || "top";
 	const rows = ports.map(p => {
 		const m = pins.map[p.name];
-		// a single bit's pin is already in its option label; a bus lists them MSB first
-		const pinTxt = p.width > 1 && m && mappingFits(p, m) ? portPinBits(p, m).map(b => b.pin).reverse().join(" ") : "";
 		return `<tr>
         <td class="pn" title="${esc(p.name)}">${esc(p.name)}${p.width > 1 ? `<span class="pw">[${p.width - 1}:0]</span>` : ""}</td>
         <td class="pd ${p.dir}">${p.dir === "in" ? "IN" : "OUT"}</td>
-        <td><select data-pin-port="${esc(p.name)}">${pinOptionsFor(p, m)}</select>
-          ${pinTxt ? `<div class="pp mono">${esc(pinTxt)}</div>` : ""}</td>
+        <td><select data-pin-port="${esc(p.name)}">${pinOptionsFor(p, m)}</select></td>
       </tr>`;
 	}).join("");
 	const issues = ports.length ? pinIssues(ports) : [];
