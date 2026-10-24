@@ -6,6 +6,8 @@ function renderAll() {
 	renderPalette();
 	render();
 	renderInspector();
+	// defined in a later script; init()'s first render happens before it has loaded
+	if (typeof renderPinPanel === "function") renderPinPanel();
 }
 
 function seedHalfAdder() {
