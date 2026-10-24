@@ -154,6 +154,18 @@ textarea:focus {
 	font-family: "JetBrains Mono", "Consolas", monospace
 }
 
+.copyable {
+	cursor: copy;
+	padding: 0 4px;
+	border-radius: 3px;
+	background: var(--bg-2, rgba(127, 127, 127, .15));
+	user-select: all
+}
+
+.copyable:hover {
+	outline: 1px solid var(--accent)
+}
+
 /* ---------- Layout ---------- */
 #app {
 	display: grid;

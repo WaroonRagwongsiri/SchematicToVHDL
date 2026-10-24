@@ -235,7 +235,7 @@ async function boardProgram(target) {
 async function boardCheckHelper() {
 	setBuildStatus("กำลังตรวจ helper และสาย JTAG…");
 	const { res, offline } = await helperFetch("/status?probe=1");
-	if (offline) { setBuildStatus("✕ ไม่พบ helper — รัน <span class=\"mono\">node helper/server.js</span>", "err"); return null; }
+	if (offline) { setBuildStatus("✕ ไม่พบ helper — รัน <span class=\"mono copyable\" data-act=\"copy-text\" title=\"คลิกเพื่อคัดลอก\">node helper/server.js</span>", "err"); return null; }
 	if (!res.ok) { setBuildStatus("✕ helper ตอบ " + res.status, "err"); return null; }
 	const s = await res.json();
 	const viv = s.vivado.found ? "✓ Vivado" : "✕ ไม่พบ Vivado";

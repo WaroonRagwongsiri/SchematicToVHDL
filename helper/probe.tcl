@@ -8,7 +8,9 @@ if {![catch {connect_hw_server -allow_non_jtag}]} {
 	set n [llength $targets]
 	foreach t $targets {
 		if {[catch {current_hw_target $t; open_hw_target}]} continue
-		foreach d [get_hw_devices -quiet] { lappend devs $d }
+		# take the NAME as a plain string — the hw_device objects themselves turn
+		# into "null" once the target is closed
+		foreach d [get_hw_devices -quiet] { lappend devs [get_property NAME $d] }
 		catch {close_hw_target}
 	}
 	catch {disconnect_hw_server}

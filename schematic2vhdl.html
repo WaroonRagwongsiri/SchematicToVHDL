@@ -156,10 +156,10 @@
 						<button class="btn" data-act="board-flash" title="เขียนลง SPI flash (อยู่ถาวร บูตเองตอนเปิดไฟ)">Program Flash</button>
 					</div>
 					<div class="build-tools sub">
-						<button class="btn btn-ghost" data-act="board-check" title="ตรวจว่า helper ทำงานอยู่ และเจอบอร์ดทาง JTAG">ตรวจ helper / บอร์ด</button>
+						<button class="btn btn-ghost" data-act="board-check" title="ตรวจว่า helper ทำงานอยู่ และเจอบอร์ดทาง JTAG">helper/board</button>
 						<button class="btn btn-ghost" data-act="board-bundle" title="ดาวน์โหลด vhd + xdc + build.tcl + program.sh เป็น .zip ไว้รันเอง">.zip</button>
 					</div>
-					<div class="build-status" id="buildStatus">รัน <span class="mono">node helper/server.js</span> ก่อน แล้วกด ▶ Build</div>
+					<div class="build-status" id="buildStatus">รัน <span class="mono copyable" data-act="copy-text" title="คลิกเพื่อคัดลอก">node helper/server.js</span> ก่อน แล้วกด ▶ Build</div>
 					<div id="buildSummary"></div>
 					<pre id="buildLog" class="mono"></pre>
 				</div>

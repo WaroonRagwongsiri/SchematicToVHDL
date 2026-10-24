@@ -17,9 +17,8 @@ const BOARD_S7 = {
 	part: "xc7s15ftgb196-1",
 	flash: { part: "s25fl064l-spi-x1_x2_x4", sizeMB: 8, iface: "SPIx4" },
 	clockSig: "clk",
-	// the board manual gives no oscillator figure we could confirm; 100 MHz is the
-	// tighter guess (a period shorter than the real one only makes timing stricter)
-	defaultClockMHz: 100,
+	// the on-board oscillator on H11
+	defaultClockMHz: 50,
 	signals: [
 		{ group: "Clock", name: "clk", dir: "in", pin: "H11" },
 		{ group: "Switches", name: "sw", dir: "in", bits: _bits(["K11", "M11", "N14", "P12", "N10", "P10", "M10", "N4", "L2", "P3", "N1", "M2", "L1", "J3", "K3", "J1"]) },
@@ -28,8 +27,11 @@ const BOARD_S7 = {
 		{ group: "Push Buttons", name: "pb", dir: "in", pulldown: true, bits: _bits(["J13", "L13", "J14", "J11", "J12"]) },
 		// digit[0] is the rightmost digit
 		{ group: "7-Segment", name: "digit", dir: "out", bits: _bits(["H4", "H3", "H2", "H1"]) },
-		// Seven_Segment[7..0] = A B C D E F G DP
-		{ group: "7-Segment", name: "seven_segment", dir: "out", bits: _bits(["J2", "K4", "J4", "M1", "M3", "P2", "P4", "L3"]) },
+		// seven_segment[0..6] = A..G, as the labs' working .xdc has segment[0] = A — the
+		// reverse of spartan7.xdc's Seven_Segment[7..1] numbering; same pins either way
+		{ group: "7-Segment", name: "seven_segment", dir: "out", bits: _bits(["L3", "P4", "P2", "M3", "M1", "J4", "K4"]) },
+		// Seven_Segment[0], the decimal point
+		{ group: "7-Segment", name: "dp", dir: "out", pin: "J2" },
 		{ group: "LCD 2x16", name: "data", dir: "out", bits: _bits(["M4", "L5", "P11", "N11", "P13", "M14", "M12", "K12"]) },
 		{ group: "LCD 2x16", name: "lcd_e", dir: "out", pin: "P5" },
 		{ group: "LCD 2x16", name: "lcd_rs", dir: "out", pin: "M5" },

@@ -245,6 +245,9 @@ function bindActionDispatcher() {
 				navigator.clipboard.writeText(t).then(() => toast("คัดลอกแล้ว", "ok"));
 				break;
 			}
+			case "copy-text":   // click-to-copy for inline commands such as node helper/server.js
+				navigator.clipboard.writeText(actionElement.textContent.trim()).then(() => toast("คัดลอกแล้ว", "ok"));
+				break;
 			case "download-vhdl": exportVhdlFile(); break;
 			case "auto-pins": {
 				const n = autoMapPins();

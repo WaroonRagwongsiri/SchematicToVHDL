@@ -5,7 +5,7 @@
    ========================================================================= */
 /* The mapping lives on the project (state.project.pins), so Save/Open, undo and
    autosave all carry it without a line of their own:
-     { clockMHz: 100, map: { <port>: { sig: "sw", lo: 0 } } }
+     { clockMHz: 50, map: { <port>: { sig: "sw", lo: 0 } } }
    A port of width W on { sig, lo } takes board bits lo .. lo+W-1 of `sig`
    (lo is ignored for a scalar board signal such as clk). */
 function pinState() {

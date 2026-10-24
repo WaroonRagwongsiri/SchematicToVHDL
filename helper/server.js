@@ -322,7 +322,7 @@ function serveStatic(req, res, url) {
 	const okPath = rel === "schematic2vhdl.html" || rel === "schematic2vhdl.css" || /^(js|img)[\\/][^\\/]+$/.test(rel);
 	const type = STATIC_TYPES[path.extname(full)];
 	if (!okPath || !type || !fs.existsSync(full)) { res.writeHead(404); res.end("not found"); return; }
-	res.writeHead(200, { "Content-Type": type });
+	res.writeHead(200, { "Content-Type": type, "Cache-Control": "no-cache" });
 	if (rel === "schematic2vhdl.html") {
 		// tell the page its API is right here, whatever port this helper is on
 		res.end(fs.readFileSync(full, "utf8").replace("<head>", '<head>\n\t<meta name="s2v-helper" content="same-origin">'));
