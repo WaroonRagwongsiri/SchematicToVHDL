@@ -88,6 +88,17 @@ function vhParseBody(body, stmts, warns) {
 	procs.forEach(p => { rest = rest.replace(p, " "); const ff = vhParseProcess(p, warns); if (ff) stmts.push(ff); });
 	vhSplitTop(rest, ";").forEach(raw => {
 		const s = raw.trim(); if (!s) return;
+		// "u_x : [entity work.]ent [generic map (...)] port map (...)" — a sub-block instance
+		const im = /^(\w+)\s*:\s*(?:entity\s+work\.)?(\w+)(?:\s+generic\s+map\s*\([\s\S]*?\))?\s+port\s+map\s*\(([\s\S]*)\)$/i.exec(s);
+		if (im) {
+			const named = {}, positional = [];
+			vhSplitTop(im[3], ",").forEach(a => {
+				const nm = /^\s*(\w+)\s*=>\s*([\s\S]+?)\s*$/.exec(a);
+				if (nm) named[nm[1].toLowerCase()] = nm[2]; else if (a.trim()) positional.push(a.trim());
+			});
+			stmts.push({ kind: "inst", label: im[1], entity: im[2], named, positional });
+			return;
+		}
 		const m = /^([\w()]+?)\s*<=\s*([\s\S]+)$/.exec(s);
 		if (!m) { if (/[a-z]/i.test(s)) warns.push("ข้ามคำสั่งที่อ่านไม่ได้: " + s.slice(0, 40)); return; }
 		const target = vhBase(m[1]), rhs = m[2].trim();
@@ -116,6 +127,21 @@ function parseVhdl(src) {
 	}
 	if ([...ports, ...signals].some(x => x.width > 1)) warns.push("มีสัญญาณบัส (>1 bit) — วาดลอจิกระดับบิตอาจไม่ครบ");
 	return { entity, ports, signals, stmts, warns };
+}
+/* Resolve an instantiated entity to a block already in the project: a schematic
+   (by sanId of its name) first, then a custom component. Pin ids are what the
+   port-map formals name (schPortList id / customPorts name). */
+function vhFindBlock(entity, warns) {
+	const key = sanId(entity).toLowerCase(), P = state.project;
+	const sch = Object.values(P.schematics || {}).find(s => sanId(s.name).toLowerCase() === key);
+	if (sch) {
+		if (sch.id === P.topId) { warns.push("'" + entity + "' คือ top ของโปรเจกต์ — ใช้เป็น sub-block ไม่ได้"); return null; }
+		return { type: "SCH:" + sch.id, pins: schPortList(sch).map(p => ({ id: p.id, dir: p.dir })) };
+	}
+	const cname = Object.keys(P.customs || {}).find(n => sanId(n).toLowerCase() === key);
+	if (cname) return { type: "CUSTOM:" + cname, pins: customPorts(P.customs[cname]).map(p => ({ id: p.name, dir: p.dir })) };
+	warns.push("ไม่พบ block '" + entity + "' — import sub-block ก่อน");
+	return null;
 }
 const VH_OPGATE = { and: "AND", or: "OR", xor: "XOR", nand: "NAND", nor: "NOR", xnor: "XNOR", not: "NOT", buf: "BUF" };
 function buildSchematicFromVhdl(ast) {
@@ -189,6 +215,25 @@ function buildSchematicFromVhdl(ast) {
 			if (sels.length === 1 && selW > 1) { need.push({ cid: id, pid: "s0", net: sels[0] }); warns.push("MUX (" + st.target + "): select เป็นเวกเตอร์ ต่อ s0 เท่านั้น"); }
 			else sels.forEach((netName, k) => { const b = selW - 1 - k; if (b >= 0 && b < selW) need.push({ cid: id, pid: "s" + b, net: netName }); });
 			driver[st.target] = { cid: id, pid: "y" }; depthOf[st.target] = 2;
+		} else if (st.kind === "inst") {
+			const blk = vhFindBlock(st.entity, warns);
+			if (!blk) return;
+			const id = add(blk.type, {});
+			// the generator names an instance "u_" + label — drop that prefix so a re-export round-trips
+			const comp = comps.find(c => c.id === id); comp.label = st.label.replace(/^u_(?=[a-z])/i, "");
+			const actualOf = (pin, i) => st.named[pin.id.toLowerCase()] !== undefined ? st.named[pin.id.toLowerCase()] : st.positional[i];
+			let d = 0; const outs = [];
+			blk.pins.forEach((pin, i) => {
+				const a = actualOf(pin, i);
+				if (a === undefined || /^open$/i.test(a.trim())) return;
+				if (pin.dir === "in") {
+					const s = emitExpr(vhParseExpr(a));
+					if (s.net !== undefined) { need.push({ cid: id, pid: pin.id, net: s.net }); d = Math.max(d, depthOf[s.net] || 0); }
+					else if (s.cid !== undefined) { wires.push({ id: uid("w"), from: { cid: s.cid, pid: s.pid }, to: { cid: id, pid: pin.id }, name: "" }); d = Math.max(d, s.depth || 0); }
+				} else outs.push({ pid: pin.id, net: vhBase(a) });
+			});
+			comp.depth = d ? d + 1 : 2;
+			outs.forEach(o => registerDriver(o.net, { cid: id, pid: o.pid, depth: comp.depth }));
 		}
 	});
 	outPorts.forEach(p => { const id = add("OUT", { name: p.name, width: p.width }); need.push({ cid: id, pid: "i", net: outAlias[p.name] || p.name }); });
@@ -198,7 +243,14 @@ function buildSchematicFromVhdl(ast) {
 	comps.forEach(c => { if (c.type === "OUT") c.depth = maxD + 1; });
 	const COLW = 176, ROWH = 88, X0 = 66, Y0 = 55, cols = {};
 	comps.forEach(c => { const d = c.depth || 0; (cols[d] = cols[d] || []).push(c); });
-	Object.keys(cols).forEach(d => { cols[d].forEach((c, i) => { c.x = snap(X0 + (+d) * COLW); c.y = snap(Y0 + i * ROWH); delete c.depth; }); });
+	// tall sub-blocks need more than one fixed row/column, so stack by real size
+	// (an empty depth still takes one COLW, as before)
+	let x = X0;
+	for (let d = 0, last = Math.max(0, ...Object.keys(cols).map(Number)); d <= last; d++) {
+		let y = Y0, widest = 0;
+		(cols[d] || []).forEach(c => { const sz = getSize(c); c.x = snap(x); c.y = snap(y); y += Math.max(ROWH, sz.h + 22); widest = Math.max(widest, sz.w); delete c.depth; });
+		x += Math.max(COLW, widest + 56);
+	}
 	return { comps, wires, unresolved: [...new Set(need.filter(nd => !driver[nd.net]).map(nd => nd.net))] };
 }
 /* base64 → the original UTF-8 string (inverse of utf8ToB64 in 13-vhdl-generator.js) */
