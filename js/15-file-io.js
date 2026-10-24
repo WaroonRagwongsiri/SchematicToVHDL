@@ -3,7 +3,7 @@
 /* =========================================================================
    FILE I/O
    ========================================================================= */
-function serialize() {
+function serialize(opts) {
 	// strip only the VHDL-generator scratch fields (never user data, whose keys
 	// could legitimately start with "_" after sanId)
 	const SCRATCH = new Set(["_net", "_nets", "_netW", "_busSig", "_busW"]);
@@ -21,13 +21,17 @@ function serialize() {
 	Object.values(state.projects).forEach(normalizeIOOrder);
 	// version 2 carries the whole workspace. `project` is still written out as the
 	// ACTIVE one so a file from here stays readable by anything expecting version 1.
+	// `compact` (autosave) drops that duplicate and the indentation: deserialize
+	// reads the workspace first, and a big workspace written twice and pretty-printed
+	// overflows the ~5 MB localStorage quota.
+	const compact = !!(opts && opts.compact);
 	return JSON.stringify({
 		version: 2,
 		workspace: { projects: state.projects, activeId: state.activeProjectId },
-		project: state.project,
+		project: compact ? undefined : state.project,
 		activeId: state.activeId,
 		openTabs: state.openTabs,
-	}, (k, v) => SCRATCH.has(k) ? undefined : v, 2);
+	}, (k, v) => SCRATCH.has(k) ? undefined : v, compact ? undefined : 2);
 }
 function resetVhdlPanel() {
 	_lastAllVhdl = null;
@@ -359,10 +363,16 @@ function splitProject(ids, opts) {
    ========================================================================= */
 function autosave() {
 	try {
-		localStorage.setItem(AUTOSAVE_KEY, serialize());
+		localStorage.setItem(AUTOSAVE_KEY, serialize({ compact: true }));
 		$("#statAutosave").innerHTML = `<span class="ok">autosave: ✓ ${new Date().toLocaleTimeString()}</span>`;
 	} catch (e) {
-		$("#statAutosave").innerHTML = `<span class="err">autosave failed</span>`;
+		console.warn("Autosave failed:", e);
+		const full = e && e.name === "QuotaExceededError";
+		const el = document.createElement("span");
+		el.className = "err";
+		el.textContent = full ? "autosave failed: storage full — Save Project to file" : "autosave failed";
+		el.title = (e && e.message) || String(e);
+		$("#statAutosave").replaceChildren(el);
 	}
 }
 function loadAutosave() {
