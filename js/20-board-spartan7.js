@@ -11,7 +11,8 @@
    dir: what the PCB wires the pin to — "in" (switch, button, clock), "out"
    (LED, display) or "io" (a connector: either is fine). Mapping an OUT port onto
    a switch would fight the switch, so the pin panel warns about it. */
-const _bits = pins => pins.map((pin, i) => ({ i, pin }));
+// notes: an optional per-bit label (where the part sits on the board), shown in the pin picker
+const _bits = (pins, notes) => pins.map((pin, i) => notes ? { i, pin, note: notes[i] } : { i, pin });
 const BOARD_S7 = {
 	name: "EDGE Spartan-7",
 	part: "xc7s15ftgb196-1",
@@ -23,8 +24,8 @@ const BOARD_S7 = {
 		{ group: "Clock", name: "clk", dir: "in", pin: "H11" },
 		{ group: "Switches", name: "sw", dir: "in", bits: _bits(["K11", "M11", "N14", "P12", "N10", "P10", "M10", "N4", "L2", "P3", "N1", "M2", "L1", "J3", "K3", "J1"]) },
 		{ group: "LEDs", name: "led", dir: "out", bits: _bits(["K12", "M12", "M14", "P13", "N11", "P11", "L5", "M4", "J4", "L3", "P4", "K4", "P2", "J2", "M3", "M1"]) },
-		// 0 top, 1 bottom, 2 left, 3 right, 4 center — no pull-up on the board, so pulldown
-		{ group: "Push Buttons", name: "pb", dir: "in", pulldown: true, bits: _bits(["J13", "L13", "J14", "J11", "J12"]) },
+		// no pull-up on the board, so pulldown
+		{ group: "Push Buttons", name: "pb", dir: "in", pulldown: true, bits: _bits(["J13", "L13", "J14", "J11", "J12"], ["top", "bottom", "left", "right", "center"]) },
 		// digit[0] is the rightmost digit
 		{ group: "7-Segment", name: "digit", dir: "out", bits: _bits(["H4", "H3", "H2", "H1"]) },
 		// seven_segment[0..6] = A..G, as the labs' working .xdc has segment[0] = A — the

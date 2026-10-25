@@ -229,11 +229,11 @@ function pinOptionsFor(port, cur) {
 		if (!s.bits) {
 			if (port.width === 1) opts.push({ v: s.name, t: `${s.name} (${s.pin})` });
 		} else if (port.width === 1) {
-			s.bits.forEach(b => opts.push({ v: `${s.name}:${b.i}`, t: `${s.name}[${b.i}] (${b.pin})` }));
+			s.bits.forEach(b => opts.push({ v: `${s.name}:${b.i}`, t: `${s.name}[${b.i}] (${b.pin})${b.note ? " — " + b.note : ""}` }));
 		} else {
 			// a bus slot lists its package pins MSB first
 			for (let lo = 0; lo + port.width <= s.bits.length; lo++) {
-				const pinList = s.bits.slice(lo, lo + port.width).map(b => b.pin).reverse().join(" ");
+				const pinList = s.bits.slice(lo, lo + port.width).map(b => b.note ? `${b.pin} ${b.note}` : b.pin).reverse().join(s.bits[0].note ? ", " : " ");
 				opts.push({ v: `${s.name}:${lo}`, t: `${s.name}[${lo + port.width - 1}:${lo}] (${pinList})` });
 			}
 		}
