@@ -200,3 +200,37 @@ test("instance labels never collide with each other or a port; the stamp carries
 	expect(r.stamped).toBe(true);
 	expect(r.scratch).toBe(false);
 });
+
+test("a labelled block names its own signals", async ({ page }) => {
+	const code = await page.evaluate(() => {
+		const top = topSheet();
+		mk(top, {
+			a: { type: "IN", params: { name: "a", width: 1 } },
+			g: { type: "NOT", params: {}, label: "carry" },
+			n: { type: "NOT", params: {} },
+			y: { type: "OUT", params: { name: "y", width: 1 } },
+		}, [["a", "o", "g", "i0"], ["g", "o", "n", "i0"], ["n", "o", "y", "i"]]);
+		return codeOf(top.name);
+	});
+	expect(code).toMatch(/signal [\w, ]*\bcarry_o\b[\w, ]*:/);
+	expect(code).toMatch(/carry_o <= not /);
+});
+
+test("a net named like an instantiated sub-sheet moves aside for the component", async ({ page }) => {
+	const code = await page.evaluate(() => {
+		const sub = newSheet("adder");
+		mk(sub, { a: { type: "IN", params: { name: "a", width: 1 } }, y: { type: "OUT", params: { name: "y", width: 1 } } }, [["a", "o", "y", "i"]]);
+		const top = topSheet();
+		mk(top, {
+			a: { type: "IN", params: { name: "a", width: 1 } },
+			g: { type: "NOT", params: {} },
+			S: { type: "SCH:" + sub.id },
+			o: { type: "OUT", params: { name: "o", width: 1 } },
+		}, [["a", "o", "g", "i0"], ["g", "o", "S", "a"], ["S", "y", "o", "i"]]);
+		top.wires.find(w => w.from.cid === top.components[1].id).name = "adder";
+		return codeOf(top.name);
+	});
+	expect(code).toContain("component adder");
+	expect(code).toMatch(/signal [\w, ]*\badder_1\b[\w, ]*:/);
+	expect(code).not.toMatch(/signal [\w, ]*\badder\b[, ]/);
+});

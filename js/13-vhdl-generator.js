@@ -108,6 +108,15 @@ function generateSchVhdl(sch) {
 	// assign net names
 	const used = {};
 	function uniq(b) { let n = sanId(b) || "net", i = 1; while (used[n]) n = sanId(b) + "_" + (i++); used[n] = 1; return n; }
+	// a sub-entity's COMPONENT name lives in this declarative region too, so reserve it
+	// before any net is named: a wire called `adder` becomes `adder_1`, not a clash
+	inners.forEach(c => {
+		let nm = null;
+		if (c.type.indexOf("SCH:") === 0) { const s = subSheetOf(c); if (s) nm = sanId(s.name); }
+		else if (c.type.indexOf("CUSTOM:") === 0) { const cc = (state.project.customs || {})[c.type.slice(7)]; if (cc) nm = sanId(cc.name); }
+		else if (c.type === "TEMPBLOCK") nm = sanId((c.params && c.params.entity) || "temp_block");
+		if (nm) used[nm] = 1;
+	});
 	// PORTS FIRST: a port name is what the parent wires to, so when a port and an
 	// instance label collide it is the (private) label that has to move
 	inputs.forEach(c => { c._net = uniq(c.params.name || "in"); });
@@ -141,7 +150,8 @@ function generateSchVhdl(sch) {
 		}
 		td.ports(c.params || {}).forEach(p => {
 			if (p.dir === "out") {
-				c._nets[p.id] = uniq(`n${i + 1}_${p.id}`);
+				// a labelled block names its own signals; explicit wire names still win below
+				c._nets[p.id] = uniq(c.label ? `${sanId(c.label)}_${p.id}` : `n${i + 1}_${p.id}`);
 				c._netW[p.id] = p.width || 1;
 			}
 		});
