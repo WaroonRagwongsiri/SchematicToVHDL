@@ -305,6 +305,8 @@ function runSynthesis() {
 			ref: h.sheet.name, schId: h.sheet.id
 		});
 	});
+	// board pin map (21-pin-mapping.js) — only once the user has started mapping
+	if (typeof pinIssuesForSynthesis === "function") pinIssuesForSynthesis().forEach(i => issues.push(i));
 	renderErrors(issues);
 	setRightTab("errors");
 	if (issues.filter(i => i.lvl === "err").length === 0) {

@@ -134,6 +134,8 @@
 					<button class="active" data-rtab="inspector">Inspector</button>
 					<button data-rtab="errors">Issues</button>
 					<button data-rtab="vhdl">VHDL</button>
+					<button data-rtab="pins" title="กำหนดขาบนบอร์ด EDGE Spartan-7 และสร้าง .xdc">Pins</button>
+					<button data-rtab="build" title="Build ด้วย Vivado แล้วโหลดลงบอร์ด">Build</button>
 				</div>
 				<div class="pane-body" id="inspectorPane"></div>
 				<div class="pane-body hidden" id="errorsPane"></div>
@@ -145,6 +147,21 @@
 					</div>
 					<pre id="vhdlOutput"
 						class="mono"><span class="cm">-- กดปุ่ม "⚙ Generate VHDL" ด้านบน เพื่อสร้างโค้ดจากวงจร</span></pre>
+				</div>
+				<div class="pane-body hidden" id="pinsPane"></div>
+				<div class="pane-body hidden build-pane" id="buildPane">
+					<div class="build-tools">
+						<button class="btn btn-primary" data-act="board-build" title="Generate VHDL + .xdc แล้ว build ด้วย Vivado (ผ่าน helper)">▶ Build</button>
+						<button class="btn" data-act="board-sram" title="โหลด bitstream ลง FPGA ทาง JTAG (หายเมื่อปิดไฟ)">Program SRAM</button>
+						<button class="btn" data-act="board-flash" title="เขียนลง SPI flash (อยู่ถาวร บูตเองตอนเปิดไฟ)">Program Flash</button>
+					</div>
+					<div class="build-tools sub">
+						<button class="btn" data-act="board-check" title="ตรวจว่า helper ทำงานอยู่ และเจอบอร์ดทาง JTAG">helper/board</button>
+						<button class="btn" data-act="board-bundle" title="ดาวน์โหลด vhd + xdc + build.tcl + program.sh เป็น .zip ไว้รันเอง">.zip</button>
+					</div>
+					<div class="build-status" id="buildStatus">รัน <span class="mono copyable" data-act="copy-text" title="คลิกเพื่อคัดลอก">node helper/server.js</span> ก่อน แล้วกด ▶ Build</div>
+					<div id="buildSummary"></div>
+					<pre id="buildLog" class="mono"></pre>
 				</div>
 			</aside>
 		</div>
@@ -1319,6 +1336,10 @@
 	<script defer src="js/17-ui-controller.js"></script>
 	<script defer src="js/18-main.js"></script>
 	<script defer src="js/19-tempblock-ports.js"></script>
+	<script defer src="js/20-board-spartan7.js"></script>
+	<script defer src="js/21-pin-mapping.js"></script>
+	<script defer src="js/22-board-build.js"></script>
+	<script defer src="js/23-vivado-tcl.js"></script>
 </body>
 
 </html>

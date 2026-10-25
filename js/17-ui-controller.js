@@ -45,6 +45,10 @@ function setRightTab(name) {
 	$("#inspectorPane").classList.toggle("hidden", name !== "inspector");
 	$("#errorsPane").classList.toggle("hidden", name !== "errors");
 	$("#vhdlPane").classList.toggle("hidden", name !== "vhdl");
+	$("#pinsPane").classList.toggle("hidden", name !== "pins");
+	$("#buildPane").classList.toggle("hidden", name !== "build");
+	// the port list is derived from the live schematic, so it is drawn on arrival
+	if (name === "pins" && typeof renderPinPanel === "function") renderPinPanel();
 }
 
 function updateHopMenuLabel() {
@@ -241,7 +245,32 @@ function bindActionDispatcher() {
 				navigator.clipboard.writeText(t).then(() => toast("คัดลอกแล้ว", "ok"));
 				break;
 			}
+			case "copy-text":   // click-to-copy for inline commands such as node helper/server.js
+				navigator.clipboard.writeText(actionElement.textContent.trim()).then(() => toast("คัดลอกแล้ว", "ok"));
+				break;
 			case "download-vhdl": exportVhdlFile(); break;
+			case "auto-pins": {
+				const n = autoMapPins();
+				snapshot(); renderPinPanel();
+				toast(n ? `กำหนดขาให้ ${n} พอร์ต` : "ไม่มีพอร์ตที่ยังว่างให้กำหนด", n ? "ok" : "info");
+				break;
+			}
+			case "clear-pins": {
+				if (!confirm("ล้างการกำหนดขาทั้งหมด?")) return;
+				pinState().map = {};
+				snapshot(); renderPinPanel();
+				break;
+			}
+			case "download-xdc": exportXdcFile(); break;
+			case "board-build": boardBuild(); break;
+			case "board-sram": boardProgram("sram"); break;
+			case "board-flash": boardProgram("flash"); break;
+			case "board-check": boardCheckHelper(); break;
+			case "board-bundle": {
+				const f = downloadBuildBundle();
+				if (f) toast("Downloaded " + f + " — แตกไฟล์แล้วรัน sh program.sh build", "ok", 3600);
+				break;
+			}
 			case "open-manual": openManual(); break;
 			case "theme": {
 				const k = actionElement.dataset.theme;

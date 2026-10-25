@@ -154,6 +154,18 @@ textarea:focus {
 	font-family: "JetBrains Mono", "Consolas", monospace
 }
 
+.copyable {
+	cursor: copy;
+	padding: 0 4px;
+	border-radius: 3px;
+	background: var(--bg-2, rgba(127, 127, 127, .15));
+	user-select: all
+}
+
+.copyable:hover {
+	outline: 1px solid var(--accent)
+}
+
 /* ---------- Layout ---------- */
 #app {
 	display: grid;
@@ -1387,4 +1399,134 @@ textarea:focus {
 	padding: 6px 28px 48px;
 	scroll-behavior: smooth;
 	min-height: 0
+}
+/* ---------- Pins tab (board pin mapping) ---------- */
+.insp.pins h3 .sub {
+	font-weight: 400;
+	font-size: 11px;
+	color: var(--muted)
+}
+.pin-tools,
+.build-tools {
+	display: flex;
+	gap: 6px;
+	align-items: center;
+	margin: 4px 0 10px
+}
+.pin-tools .grow {
+	flex: 1
+}
+.pin-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 12px
+}
+.pin-table td {
+	padding: 4px 4px;
+	border-bottom: 1px solid var(--line);
+	vertical-align: top
+}
+.pin-table td.pn {
+	max-width: 110px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: "JetBrains Mono", "Consolas", monospace;
+	padding-top: 9px
+}
+.pin-table .pw {
+	color: var(--muted);
+	margin-left: 2px
+}
+.pin-table td.pd {
+	font-size: 10px;
+	font-weight: 600;
+	padding-top: 10px
+}
+.pin-table td.pd.in {
+	color: var(--ok)
+}
+.pin-table td.pd.out {
+	color: var(--err)
+}
+.pin-table select {
+	width: 100%
+}
+.pin-table.sum td:first-child {
+	color: var(--ink-dim);
+	width: 80px
+}
+.pin-status {
+	margin-top: 10px;
+	font-size: 12px
+}
+.pin-status.ok,
+.build-status.ok {
+	color: var(--ok)
+}
+.pin-status.warn,
+.build-status.warn {
+	color: var(--warn)
+}
+.pin-status.err,
+.build-status.err {
+	color: var(--err)
+}
+.pin-status a {
+	color: inherit
+}
+
+/* ---------- Build tab ---------- */
+.build-pane {
+	display: flex;
+	flex-direction: column;
+	height: 100%
+}
+.build-pane .build-tools {
+	padding: 8px 8px 0;
+	margin: 0;
+	flex-wrap: wrap
+}
+.build-pane .build-tools.sub {
+	padding-top: 4px
+}
+.build-pane .btn:disabled {
+	opacity: .5;
+	cursor: default
+}
+.build-status {
+	padding: 8px 10px;
+	font-size: 12px;
+	color: var(--ink-dim);
+	border-bottom: 1px solid var(--line)
+}
+#buildSummary {
+	padding: 0 8px
+}
+#buildLog {
+	flex: 1;
+	margin: 0;
+	padding: 8px 10px;
+	overflow: auto;
+	font-size: 10.5px;
+	line-height: 1.45;
+	white-space: pre-wrap;
+	word-break: break-all;
+	color: var(--ink-dim);
+	background: var(--bg-0);
+	user-select: text
+}
+#buildLog .e {
+	color: var(--err);
+	font-weight: 600
+}
+#buildLog .c {
+	color: var(--err)
+}
+#buildLog .w {
+	color: var(--warn)
+}
+#buildLog .s {
+	color: var(--accent);
+	font-weight: 600
 }
