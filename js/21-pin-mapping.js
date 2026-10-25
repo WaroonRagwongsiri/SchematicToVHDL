@@ -275,7 +275,7 @@ function renderPinPanel() {
       <div class="row"><label>Top entity</label><span class="mono">${esc(sanId(topName))}</span></div>
       <div class="row"><label>Clock (MHz)</label><input type="number" id="pinClockMHz" min="1" max="800" step="any" value="${pins.clockMHz}"></div>
       <div class="pin-tools">
-        <button class="btn" data-act="auto-pins" title="กำหนดขาที่ยังว่างตามชื่อ (clk, sw, led, pb…) ที่เหลือลง switch/LED">⚡ Auto-map</button>
+        <button class="btn" data-act="auto-pins" title="กำหนดขาที่ยังว่างตามชื่อ (clk, sw, led, pb…) ที่เหลือลง switch/LED">Auto-map</button>
         <button class="btn" data-act="clear-pins">ล้าง</button>
         <span class="grow"></span>
         <button class="btn" data-act="download-xdc">.xdc</button>
