@@ -99,6 +99,9 @@ function renderInspector() {
 			const td = typeDef(c);
 			const schema = td && td.paramSchema || [];
 			let html = `<div class="insp"><h3>${esc(td ? td.label : c.type)} <span style="font-size:11px;color:var(--muted);font-weight:normal">${esc(c.id)}</span></h3>`;
+			if (td && td.compat) {
+				html += `<div style="font-size:11px;color:var(--warn);margin:-4px 0 8px">⚠ ${esc(td.compat)} — เปิดในไฟล์ 20261025 จะไม่แสดง/ไม่ generate</div>`;
+			}
 			html += `<div class="row"><label>Position</label>
         <span><input style="width:62px" id="iX" value="${c.x}"> <input style="width:62px" id="iY" value="${c.y}"></span></div>`;
 			// a free-text name for THIS block: shown on the canvas, used as the signal /

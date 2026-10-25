@@ -309,11 +309,13 @@ function renderPalette() {
 			const p = TYPES[t].defaultParams || {};
 			const sz = TYPES[t].size(p);
 			const sc = Math.min(60 / sz.w, 36 / sz.h, 1);
-			html.push(`<div class="ptile" draggable="true" data-pal="${t}">
+			// compat: a type the older single-file build does not know — say so up front
+			const compat = TYPES[t].compat;
+			html.push(`<div class="ptile" draggable="true" data-pal="${t}"${compat ? ` title="${esc(compat)}"` : ""}>
         <svg width="60" height="40" viewBox="0 0 ${sz.w} ${sz.h}" preserveAspectRatio="xMidYMid meet">
           ${TYPES[t].shape(p)}
         </svg>
-        <span>${TYPES[t].label}</span>
+        <span>${TYPES[t].label}${compat ? ` <span style="color:var(--warn)">⚠</span>` : ""}</span>
       </div>`);
 		}
 		html.push(`</div></div>`);

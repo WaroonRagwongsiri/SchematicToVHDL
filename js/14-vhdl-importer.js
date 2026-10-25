@@ -191,9 +191,22 @@ function buildSchematicFromVhdl(ast) {
 			// size by the highest select index (or case count if indices didn't parse) —
 			// the trailing "else '0'" is a fill for unused slots, NOT an extra data input
 			const nCase = Math.max(2, maxIdx + 1, st.cases.length);
-			const inputs = nCase <= 2 ? 2 : nCase <= 4 ? 4 : nCase <= 8 ? 8 : 16;
-			const selW = Math.ceil(Math.log2(inputs));
-			const id = add("MUX", { inputs });
+			// a vector target, or ONE vector select, needs the bus MUX (any N, a data
+			// width, a select bus); everything else stays the plain 2/4/8/16 MUX
+			const sels = (parsed.find(p => p.sels && p.sels.length) || {}).sels || (st.sel ? [st.sel] : []);
+			const widthOf = n => ([...ast.ports, ...(ast.signals || [])].find(x => sanId(x.name) === n) || {}).width || 1;
+			const width = widthOf(st.target), sigSelW = sels.length === 1 ? widthOf(sels[0]) : 1;
+			const selBus = sels.length === 1 && (sigSelW > 1 || muxSelW(clamp(nCase, 2, 32)) > 1);
+			const bus = width > 1 || selBus;
+			// the plain MUX rounds up to a power of two, which leaves a slot for a real
+			// default ("else d"); the bus MUX takes the exact N, so give the default its
+			// own input — unless it is just the '0' / (others => '0') fill.
+			// The select bus must also be as wide as the signal driving it: grow N until it is.
+			const realDeflt = st.deflt && st.deflt.lit !== "0" ? 1 : 0;
+			const inputs = bus ? clamp(Math.max(nCase + realDeflt, sigSelW > 1 ? 2 ** (sigSelW - 1) + 1 : 2), 2, 32)
+				: nCase <= 2 ? 2 : nCase <= 4 ? 4 : nCase <= 8 ? 8 : 16;
+			const selW = bus ? muxSelW(inputs) : Math.ceil(Math.log2(inputs));
+			const id = bus ? add("BUSMUX", { inputs, width: clamp(width, 1, 32), selBus }) : add("MUX", { inputs });
 			const used = new Set();
 			const place = (idx, v) => {
 				used.add(idx); const s = emitExpr(v);
@@ -211,8 +224,7 @@ function buildSchematicFromVhdl(ast) {
 			if (st.deflt) { let idx = 0; for (; idx < inputs && used.has(idx); idx++); if (idx < inputs) place(idx, st.deflt); }
 			// wire the select signal(s). vhMuxSel lists them MSB-first (the app emits
 			// s_{hi}=MSB … s0=LSB), so the k-th listed maps to pin s{selW-1-k}.
-			const sels = (parsed.find(p => p.sels && p.sels.length) || {}).sels || (st.sel ? [st.sel] : []);
-			if (sels.length === 1 && selW > 1) { need.push({ cid: id, pid: "s0", net: sels[0] }); warns.push("MUX (" + st.target + "): select เป็นเวกเตอร์ ต่อ s0 เท่านั้น"); }
+			if (selBus) need.push({ cid: id, pid: "s", net: sels[0] });
 			else sels.forEach((netName, k) => { const b = selW - 1 - k; if (b >= 0 && b < selW) need.push({ cid: id, pid: "s" + b, net: netName }); });
 			driver[st.target] = { cid: id, pid: "y" }; depthOf[st.target] = 2;
 		} else if (st.kind === "inst") {
@@ -237,7 +249,7 @@ function buildSchematicFromVhdl(ast) {
 		}
 	});
 	outPorts.forEach(p => { const id = add("OUT", { name: p.name, width: p.width }); need.push({ cid: id, pid: "i", net: outAlias[p.name] || p.name }); });
-	comps.forEach(c => { if (c.type === "IN") c.depth = 0; if ((c.type === "DFF" || c.type === "MUX") && c.depth == null) c.depth = 2; });
+	comps.forEach(c => { if (c.type === "IN") c.depth = 0; if ((c.type === "DFF" || c.type === "MUX" || c.type === "BUSMUX") && c.depth == null) c.depth = 2; });
 	need.forEach(nd => { const drv = driver[nd.net]; if (drv) wires.push({ id: uid("w"), from: { cid: drv.cid, pid: drv.pid }, to: { cid: nd.cid, pid: nd.pid }, name: "" }); });
 	const maxD = Math.max(0, ...comps.filter(c => c.type !== "OUT").map(c => c.depth || 0));
 	comps.forEach(c => { if (c.type === "OUT") c.depth = maxD + 1; });

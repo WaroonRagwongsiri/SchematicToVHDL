@@ -450,38 +450,53 @@ function generateSchVhdl(sch) {
 			concurrent.push(`  ${c._nets.o} <= ${TYPES[c.type].expr(ins)};`);
 			return;
 		}
-		/* ----- MUX ----- */
-		if (c.type === "MUX") {
-			const n = c.params.inputs;
-			const selW = Math.ceil(Math.log2(n));
+		/* ----- MUX / BUS MUX -----
+		   One emitter for both. The plain MUX has no width / selBus params, so it gets
+		   W=1 and the per-bit select form and its output stays exactly what it was. */
+		/* a select BUS driven by a literal (unwired pin, CONST) must be qualified, or
+		   `"10" = "10"` / `(others => '0') = "00"` has no type to resolve against */
+		const muxSelBus = selW => {
+			const v = driverFor("s");
+			if (selW === 1) return /^'[01]'$/.test(v) ? `STD_LOGIC'(${v})` : v;
+			if (/^\(/.test(v)) return `STD_LOGIC_VECTOR'(${selW - 1} downto 0 => '0')`;
+			if (/^x?"/i.test(v)) return `STD_LOGIC_VECTOR'(${v})`;
+			return v;
+		};
+		const muxCond = (selBus, selIns, sel, bits) => selBus
+			? (bits.length === 1 ? `${sel} = '${bits}'` : `${sel} = "${bits}"`)
+			: selIns.length === 1
+				? `${selIns[0]} = '${bits}'`
+				: `(${selIns.slice().reverse().map((s, k) => `${s} = '${bits[k]}'`).join(" and ")})`;
+		if (c.type === "MUX" || c.type === "BUSMUX") {
+			const bus = c.type === "BUSMUX";
+			const n = bus ? clamp(Math.round(c.params.inputs || 2) || 2, 2, 32) : c.params.inputs;
+			const selW = bus ? muxSelW(n) : Math.ceil(Math.log2(n));
+			const W = gateWidth(c.params), selBus = bus && !!c.params.selBus;
 			const dataIns = []; for (let i = 0; i < n; i++) dataIns.push(driverFor("d" + i));
-			const selIns = []; for (let i = 0; i < selW; i++) selIns.push(driverFor("s" + i));
-			// build: y <= dataIns[ to_integer(sel) ];
-			const selExpr = selIns.length === 1 ? selIns[0]
-				: selIns.slice().reverse().map(s => s).join(" & ");
+			const selIns = []; if (!selBus) for (let i = 0; i < selW; i++) selIns.push(driverFor("s" + i));
+			const sel = selBus ? muxSelBus(selW) : null;
 			const condChain = [];
 			for (let i = 0; i < n; i++) {
 				const bits = i.toString(2).padStart(selW, "0");
-				const cond = selIns.length === 1
-					? `${selIns[0]} = '${bits}'`
-					: `(${selIns.slice().reverse().map((s, k) => `${s} = '${bits[k]}'`).join(" and ")})`;
-				condChain.push(`${dataIns[i]} when ${cond}`);
+				condChain.push(`${dataIns[i]} when ${muxCond(selBus, selIns, sel, bits)}`);
 			}
-			concurrent.push(`  ${c._nets.y} <= ${condChain.join(" else\n             ")} else '0';`);
+			const fill = W === 1 ? "'0'" : zlit(W);
+			concurrent.push(`  ${c._nets.y} <= ${condChain.join(" else\n             ")} else ${fill};`);
 			return;
 		}
-		/* ----- DEMUX ----- */
-		if (c.type === "DEMUX") {
-			const n = c.params.outputs;
-			const selW = Math.ceil(Math.log2(n));
+		/* ----- DEMUX / BUS DEMUX ----- */
+		if (c.type === "DEMUX" || c.type === "BUSDEMUX") {
+			const bus = c.type === "BUSDEMUX";
+			const n = bus ? clamp(Math.round(c.params.outputs || 2) || 2, 2, 32) : c.params.outputs;
+			const selW = bus ? muxSelW(n) : Math.ceil(Math.log2(n));
+			const W = gateWidth(c.params), selBus = bus && !!c.params.selBus;
 			const d = driverFor("d");
-			const selIns = []; for (let i = 0; i < selW; i++) selIns.push(driverFor("s" + i));
+			const selIns = []; if (!selBus) for (let i = 0; i < selW; i++) selIns.push(driverFor("s" + i));
+			const sel = selBus ? muxSelBus(selW) : null;
+			const fill = W === 1 ? "'0'" : zlit(W);
 			for (let i = 0; i < n; i++) {
 				const bits = i.toString(2).padStart(selW, "0");
-				const cond = selIns.length === 1
-					? `${selIns[0]} = '${bits}'`
-					: `(${selIns.slice().reverse().map((s, k) => `${s} = '${bits[k]}'`).join(" and ")})`;
-				concurrent.push(`  ${c._nets["y" + i]} <= ${d} when ${cond} else '0';`);
+				concurrent.push(`  ${c._nets["y" + i]} <= ${d} when ${muxCond(selBus, selIns, sel, bits)} else ${fill};`);
 			}
 			return;
 		}

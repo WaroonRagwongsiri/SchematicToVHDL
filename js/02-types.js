@@ -151,6 +151,104 @@ function cmpDef(mag) {
 		}
 	};
 }
+/* MUX / DEMUX. The plain pair is the 1-bit ISE part (2/4/8/16 ways) and must stay
+   exactly as the 20261025 build saves it; the bus pair takes any N, a data width and
+   either per-bit select pins or one select bus. */
+const MUX_COMPAT = "ไม่รองรับไฟล์ 20261025";
+function muxSelW(n) { return Math.max(1, Math.ceil(Math.log2(n))); }
+function muxN(p, key, bus) { return bus ? clamp(Math.round(p[key] || 2) || 2, 2, 32) : p[key]; }
+function muxSub(bus, txt, p) { return bus ? `${txt} ×${gateWidth(p)}` : txt; }
+function muxWarn(bus, w, h) {
+	return bus ? `
+              <text x="${w / 2}" y="${h / 2 + 21}" text-anchor="middle" font-size="8" fill="var(--muted)">⚠ 20261025</text>` : "";
+}
+// body width: the plain part is fixed at 99; a bus part grows with its longest pin
+// label ("d31(31:0)") so the labels on both edges stay clear of the centred title
+function muxBodyW(bus, n, p) {
+	if (!bus) return 99;
+	const lab = portLabel("d" + (n - 1), gateWidth(p)).length * 5.5;
+	return Math.ceil(Math.max(121, 2 * lab + 80) / GRID) * GRID;
+}
+function muxDef(bus) {
+	const geo = p => {
+		const n = muxN(p, "inputs", bus), sel = bus ? muxSelW(n) : Math.ceil(Math.log2(n));
+		const selRows = bus && p.selBus ? 1 : sel;
+		return { n, sel, selRows, w: muxBodyW(bus, n, p), h: 22 * (n + selRows + 2) };
+	};
+	return {
+		label: bus ? "Bus MUX" : "MUX", category: "mux",
+		...(bus ? { compat: MUX_COMPAT } : {}),
+		defaultParams: bus ? { inputs: 4, width: 8, selBus: false } : { inputs: 2 },
+		paramSchema: bus ? [
+			{ key: "inputs", label: "Data inputs", type: "int", min: 2, max: 32 },
+			{ key: "width", label: "ความกว้าง (bit)", type: "int", min: 1, max: 32 },
+			{ key: "selBus", label: "Select เป็นบัส", type: "bool" },
+		] : [{ key: "inputs", label: "Data inputs", type: "select", options: [2, 4, 8, 16] }],
+		size(p) { const g = geo(p); return blockSize(g.w, g.h); },
+		ports(p) {
+			const { n, sel, w: W, h } = geo(p);
+			const bits = bus ? gateWidth(p) : 1;
+			const ports = [];
+			for (let i = 0; i < n; i++) {
+				ports.push(bus ? { id: "d" + i, dir: "in", dx: 0, dy: 22 * (i + 1), label: portLabel("d" + i, bits), width: bits }
+					: { id: "d" + i, dir: "in", dx: 0, dy: 22 * (i + 1), label: "d" + i });
+			}
+			if (bus && p.selBus) ports.push({ id: "s", dir: "in", dx: 0, dy: h - 22, label: portLabel("s", sel), width: sel });
+			else for (let i = 0; i < sel; i++) ports.push({ id: "s" + i, dir: "in", dx: 0, dy: h - 22 * (sel - i), label: "s" + i });
+			ports.push(bus ? { id: "y", dir: "out", dx: W, dy: h / 2, label: portLabel("y", bits), width: bits }
+				: { id: "y", dir: "out", dx: W, dy: h / 2, label: "y" });
+			return ports;
+		},
+		shape(p) {
+			const { n, w, h } = geo(p);
+			const taper = 10;
+			return `<path class="glow" d="M6,4 L${w - 6},${4 + taper} L${w - 6},${h - 4 - taper} L6,${h - 4} Z"
+              fill="var(--gate-fill)" stroke="var(--gate-stroke)" stroke-width="1.7"/>
+              <text x="${w / 2}" y="${h / 2 - 6}" text-anchor="middle" font-size="12" font-weight="700" fill="var(--ink)">${bus ? "BUS MUX" : "MUX"}</text>
+              <text x="${w / 2}" y="${h / 2 + 9}" text-anchor="middle" font-size="9.5" fill="var(--ink-dim)">${muxSub(bus, `${n}:1`, p)}</text>${muxWarn(bus, w, h)}`;
+		}
+	};
+}
+function demuxDef(bus) {
+	const geo = p => {
+		const n = muxN(p, "outputs", bus), sel = bus ? muxSelW(n) : Math.ceil(Math.log2(n));
+		const selRows = bus && p.selBus ? 1 : sel;
+		return { n, sel, selRows, w: muxBodyW(bus, n, p), h: 22 * Math.max(n + 1, selRows + 3) };
+	};
+	return {
+		label: bus ? "Bus DEMUX" : "DEMUX", category: "mux",
+		...(bus ? { compat: MUX_COMPAT } : {}),
+		defaultParams: bus ? { outputs: 4, width: 8, selBus: false } : { outputs: 2 },
+		paramSchema: bus ? [
+			{ key: "outputs", label: "Data outputs", type: "int", min: 2, max: 32 },
+			{ key: "width", label: "ความกว้าง (bit)", type: "int", min: 1, max: 32 },
+			{ key: "selBus", label: "Select เป็นบัส", type: "bool" },
+		] : [{ key: "outputs", label: "Data outputs", type: "select", options: [2, 4, 8, 16] }],
+		size(p) { const g = geo(p); return blockSize(g.w, g.h); },
+		ports(p) {
+			const { n, sel, w: W, h } = geo(p);
+			const bits = bus ? gateWidth(p) : 1;
+			const ports = [];
+			ports.push(bus ? { id: "d", dir: "in", dx: 0, dy: 22, label: portLabel("d", bits), width: bits }
+				: { id: "d", dir: "in", dx: 0, dy: 22, label: "d" });
+			if (bus && p.selBus) ports.push({ id: "s", dir: "in", dx: 0, dy: h - 22, label: portLabel("s", sel), width: sel });
+			else for (let i = 0; i < sel; i++) ports.push({ id: "s" + i, dir: "in", dx: 0, dy: h - 22 * (sel - i), label: "s" + i });
+			for (let i = 0; i < n; i++) {
+				ports.push(bus ? { id: "y" + i, dir: "out", dx: W, dy: 22 * (i + 1), label: portLabel("y" + i, bits), width: bits }
+					: { id: "y" + i, dir: "out", dx: W, dy: 22 * (i + 1), label: "y" + i });
+			}
+			return ports;
+		},
+		shape(p) {
+			const { n, w, h } = geo(p);
+			const taper = 10;
+			return `<path class="glow" d="M6,${4 + taper} L${w - 6},4 L${w - 6},${h - 4} L6,${h - 4 - taper} Z"
+              fill="var(--gate-fill)" stroke="var(--gate-stroke)" stroke-width="1.7"/>
+              <text x="${w / 2}" y="${h / 2 - 6}" text-anchor="middle" font-size="12" font-weight="700" fill="var(--ink)">${bus ? "BUS DEMUX" : "DEMUX"}</text>
+              <text x="${w / 2}" y="${h / 2 + 9}" text-anchor="middle" font-size="9.5" fill="var(--ink-dim)">${muxSub(bus, `1:${n}`, p)}</text>${muxWarn(bus, w, h)}`;
+		}
+	};
+}
 /* ---------- CONST: a signal locked to a fixed value ----------
    Written as hex because that is how a data sheet gives it (0x38, 0xF4 in the LCD
    command tables). ONE normaliser, so the symbol, the label and the generated VHDL
@@ -301,64 +399,12 @@ const TYPES = {
 	/* ---------- MUX / DEMUX ---------- */
 	/* MUX/DEMUX/ENC/DEC use one grid row (22px) per pin so every pin lands on
 	   the 11px grid and always sits on the body edge — same as the gates. */
-	MUX: {
-		label: "MUX", category: "mux",
-		defaultParams: { inputs: 2 },
-		paramSchema: [{ key: "inputs", label: "Data inputs", type: "select", options: [2, 4, 8, 16] }],
-		size(p) {
-			const n = p.inputs; const sel = Math.ceil(Math.log2(n));
-			return blockSize(99, 22 * (n + sel + 2));
-		},
-		ports(p) {
-			const n = p.inputs; const sel = Math.ceil(Math.log2(n));
-			const h = 22 * (n + sel + 2);
-			const w = 99;
-			const ports = [];
-			for (let i = 0; i < n; i++)   ports.push({ id: "d" + i, dir: "in", dx: 0, dy: 22 * (i + 1), label: "d" + i });
-			for (let i = 0; i < sel; i++) ports.push({ id: "s" + i, dir: "in", dx: 0, dy: h - 22 * (sel - i), label: "s" + i });
-			ports.push({ id: "y", dir: "out", dx: w, dy: h / 2, label: "y" });
-			return ports;
-		},
-		shape(p) {
-			const n = p.inputs; const sel = Math.ceil(Math.log2(n));
-			const h = 22 * (n + sel + 2);
-			const w = 99;
-			const taper = 10;
-			return `<path class="glow" d="M6,4 L${w - 6},${4 + taper} L${w - 6},${h - 4 - taper} L6,${h - 4} Z"
-              fill="var(--gate-fill)" stroke="var(--gate-stroke)" stroke-width="1.7"/>
-              <text x="${w / 2}" y="${h / 2 - 6}" text-anchor="middle" font-size="12" font-weight="700" fill="var(--ink)">MUX</text>
-              <text x="${w / 2}" y="${h / 2 + 9}" text-anchor="middle" font-size="9.5" fill="var(--ink-dim)">${n}:1</text>`;
-		}
-	},
-	DEMUX: {
-		label: "DEMUX", category: "mux",
-		defaultParams: { outputs: 2 },
-		paramSchema: [{ key: "outputs", label: "Data outputs", type: "select", options: [2, 4, 8, 16] }],
-		size(p) {
-			const n = p.outputs; const sel = Math.ceil(Math.log2(n));
-			return blockSize(99, 22 * Math.max(n + 1, sel + 3));
-		},
-		ports(p) {
-			const n = p.outputs; const sel = Math.ceil(Math.log2(n));
-			const h = 22 * Math.max(n + 1, sel + 3);
-			const w = 99;
-			const ports = [];
-			ports.push({ id: "d", dir: "in", dx: 0, dy: 22, label: "d" });
-			for (let i = 0; i < sel; i++) ports.push({ id: "s" + i, dir: "in", dx: 0, dy: h - 22 * (sel - i), label: "s" + i });
-			for (let i = 0; i < n; i++)   ports.push({ id: "y" + i, dir: "out", dx: w, dy: 22 * (i + 1), label: "y" + i });
-			return ports;
-		},
-		shape(p) {
-			const n = p.outputs; const sel = Math.ceil(Math.log2(n));
-			const h = 22 * Math.max(n + 1, sel + 3);
-			const w = 99;
-			const taper = 10;
-			return `<path class="glow" d="M6,${4 + taper} L${w - 6},4 L${w - 6},${h - 4} L6,${h - 4 - taper} Z"
-              fill="var(--gate-fill)" stroke="var(--gate-stroke)" stroke-width="1.7"/>
-              <text x="${w / 2}" y="${h / 2 - 6}" text-anchor="middle" font-size="12" font-weight="700" fill="var(--ink)">DEMUX</text>
-              <text x="${w / 2}" y="${h / 2 + 9}" text-anchor="middle" font-size="9.5" fill="var(--ink-dim)">1:${n}</text>`;
-		}
-	},
+	MUX: muxDef(false),
+	DEMUX: demuxDef(false),
+	/* the 20261025 single-file build has a frozen 1-bit MUX/DEMUX, so the N-way,
+	   N-bit forms are separate types it simply does not know (it skips them) */
+	BUSMUX: muxDef(true),
+	BUSDEMUX: demuxDef(true),
 
 	/* ---------- BUS TAP (ISE style) ----------
 	   Draw the thin wire first and leave its end in open space, then drop a tap on

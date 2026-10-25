@@ -234,3 +234,109 @@ test("a net named like an instantiated sub-sheet moves aside for the component",
 	expect(code).toMatch(/signal [\w, ]*\badder_1\b[\w, ]*:/);
 	expect(code).not.toMatch(/signal [\w, ]*\badder\b[, ]/);
 });
+
+/* ---------- Bus MUX / Bus DEMUX ---------- */
+test("bus MUX 4:1 x8 with per-bit select drives an 8-bit signal", async ({ page }) => {
+	const code = await page.evaluate(() => {
+		const top = topSheet();
+		const parts = { m: { type: "BUSMUX", params: { inputs: 4, width: 8, selBus: false } }, y: { type: "OUT", params: { name: "y", width: 8 } } };
+		const wires = [["m", "y", "y", "i"]];
+		["a", "b", "c", "d"].forEach((n, i) => { parts[n] = { type: "IN", params: { name: n, width: 8 } }; wires.push([n, "o", "m", "d" + i]); });
+		["s0", "s1"].forEach(n => { parts[n] = { type: "IN", params: { name: n, width: 1 } }; wires.push([n, "o", "m", n]); });
+		mk(top, parts, wires);
+		return codeOf(top.name);
+	});
+	expect(code).toMatch(/y\s*:\s*out\s+STD_LOGIC_VECTOR\(7 downto 0\)/);
+	expect(code).toMatch(/d when \(s1 = '1' and s0 = '1'\) else \(others => '0'\);/);
+	expect(code).toMatch(/a when \(s1 = '0' and s0 = '0'\)/);
+});
+
+test("bus MUX with a select bus compares the whole vector; unwired select is qualified", async ({ page }) => {
+	const r = await page.evaluate(() => {
+		const top = topSheet();
+		const parts = { m: { type: "BUSMUX", params: { inputs: 5, width: 4, selBus: true } }, s: { type: "IN", params: { name: "s", width: 3 } }, y: { type: "OUT", params: { name: "y", width: 4 } } };
+		const wires = [["m", "y", "y", "i"], ["s", "o", "m", "s"]];
+		for (let i = 0; i < 5; i++) { parts["d" + i] = { type: "IN", params: { name: "d" + i, width: 4 } }; wires.push(["d" + i, "o", "m", "d" + i]); }
+		mk(top, parts, wires);
+		const wired = codeOf(top.name);
+		top.wires = top.wires.filter(w => w.to.pid !== "s");
+		const g = generateAllVhdl()[top.name];
+		return { wired, unwired: typeof g === "string" ? g : g.code, warns: (g && g.warns) || [] };
+	});
+	expect(r.wired).toMatch(/d4 when s = "100" else \(others => '0'\);/);
+	expect(r.wired).toMatch(/d0 when s = "000"/);
+	expect(r.unwired).toMatch(/STD_LOGIC_VECTOR'\(2 downto 0 => '0'\) = "100"/);
+	expect(r.warns.some(w => /ขา 's' ยังไม่ได้ต่อสาย/.test(w))).toBe(true);
+});
+
+test("bus DEMUX 1:4 x4 with a select bus", async ({ page }) => {
+	const code = await page.evaluate(() => {
+		const top = topSheet();
+		const parts = { x: { type: "BUSDEMUX", params: { outputs: 4, width: 4, selBus: true } }, d: { type: "IN", params: { name: "d", width: 4 } }, s: { type: "IN", params: { name: "s", width: 2 } } };
+		const wires = [["d", "o", "x", "d"], ["s", "o", "x", "s"]];
+		for (let i = 0; i < 4; i++) { parts["y" + i] = { type: "OUT", params: { name: "y" + i, width: 4 } }; wires.push(["x", "y" + i, "y" + i, "i"]); }
+		mk(top, parts, wires);
+		return codeOf(top.name);
+	});
+	for (let i = 0; i < 4; i++) {
+		const bits = i.toString(2).padStart(2, "0");
+		expect(code).toMatch(new RegExp(`<= d when s = "${bits}" else \\(others => '0'\\);`));
+	}
+});
+
+test("an 8-bit input into a 4-bit bus MUX data pin is a width error", async ({ page }) => {
+	const errs = await page.evaluate(() => {
+		const top = topSheet();
+		mk(top, {
+			a: { type: "IN", params: { name: "a", width: 8 } },
+			m: { type: "BUSMUX", params: { inputs: 2, width: 4, selBus: false } },
+			y: { type: "OUT", params: { name: "y", width: 4 } },
+		}, [["a", "o", "m", "d0"], ["m", "y", "y", "i"]]);
+		return runSynthesis().filter(i => i.lvl === "err" && /ความกว้างบัสไม่ตรงกัน/.test(i.msg)).length;
+	});
+	expect(errs).toBeGreaterThan(0);
+});
+
+test("plain MUX / DEMUX keep the 1-bit form and '0' fill", async ({ page }) => {
+	const code = await page.evaluate(() => {
+		const top = topSheet();
+		mk(top, {
+			a: { type: "IN", params: { name: "a", width: 1 } }, b: { type: "IN", params: { name: "b", width: 1 } },
+			c: { type: "IN", params: { name: "c", width: 1 } }, d: { type: "IN", params: { name: "d", width: 1 } },
+			s0: { type: "IN", params: { name: "s0", width: 1 } }, s1: { type: "IN", params: { name: "s1", width: 1 } },
+			m: { type: "MUX", params: { inputs: 4 } }, x: { type: "DEMUX", params: { outputs: 4 } },
+			y: { type: "OUT", params: { name: "y", width: 1 } }, z: { type: "OUT", params: { name: "z", width: 1 } },
+		}, [["a", "o", "m", "d0"], ["b", "o", "m", "d1"], ["c", "o", "m", "d2"], ["d", "o", "m", "d3"],
+			["s0", "o", "m", "s0"], ["s1", "o", "m", "s1"], ["m", "y", "y", "i"],
+			["a", "o", "x", "d"], ["s0", "o", "x", "s0"], ["s1", "o", "x", "s1"], ["x", "y2", "z", "i"]]);
+		return codeOf(top.name);
+	});
+	expect(code).toContain("a when (s1 = '0' and s0 = '0') else\n             b when (s1 = '0' and s0 = '1') else\n             c when (s1 = '1' and s0 = '0') else\n             d when (s1 = '1' and s0 = '1') else '0';");
+	expect(code).toMatch(/<= a when \(s1 = '1' and s0 = '0'\) else '0';/);
+});
+
+test("importer: a vector when/else becomes a bus MUX, a 1-bit one stays a MUX", async ({ page }) => {
+	const r = await page.evaluate(() => {
+		const vec = buildSchematicFromVhdl(parseVhdl(`
+entity m4 is port ( a, b, c, d : in std_logic_vector(3 downto 0); s : in std_logic_vector(1 downto 0); y : out std_logic_vector(3 downto 0) ); end m4;
+architecture rtl of m4 is begin
+  y <= a when s = "00" else b when s = "01" else c when s = "10" else d;
+end rtl;`));
+		const bit = buildSchematicFromVhdl(parseVhdl(`
+entity m1 is port ( a, b, s : in std_logic; y : out std_logic ); end m1;
+architecture rtl of m1 is begin
+  y <= a when s = '0' else b;
+end rtl;`));
+		const comps = b => (b.components || b.comps || (b.sch && b.sch.components) || []);
+		const bm = comps(vec).find(c => c.type === "BUSMUX");
+		const wires = vec.wires || (vec.sch && vec.sch.wires) || [];
+		return {
+			bm: bm && bm.params, sWired: !!bm && wires.some(w => w.to.cid === bm.id && w.to.pid === "s"),
+			bitTypes: comps(bit).map(c => c.type),
+		};
+	});
+	expect(r.bm).toMatchObject({ width: 4, selBus: true, inputs: 4 });
+	expect(r.sWired).toBe(true);
+	expect(r.bitTypes).toContain("MUX");
+	expect(r.bitTypes).not.toContain("BUSMUX");
+});
