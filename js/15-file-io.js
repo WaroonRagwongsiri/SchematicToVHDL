@@ -4,9 +4,8 @@
    FILE I/O
    ========================================================================= */
 function serialize(opts) {
-	// strip only the VHDL-generator scratch fields (never user data, whose keys
-	// could legitimately start with "_" after sanId)
-	const SCRATCH = new Set(["_net", "_nets", "_netW", "_busSig", "_busW"]);
+	// strip only the VHDL-generator scratch fields (NET_SCRATCH — never user data,
+	// whose keys could legitimately start with "_" after sanId)
 	stashProjectUi();
 	// never write an EMPTY workspace: the active project belongs in the map even if
 	// seedWorkspace never ran (a half-built state, a file being repaired)
@@ -31,7 +30,7 @@ function serialize(opts) {
 		project: compact ? undefined : state.project,
 		activeId: state.activeId,
 		openTabs: state.openTabs,
-	}, (k, v) => SCRATCH.has(k) ? undefined : v, compact ? undefined : 2);
+	}, dropScratch, compact ? undefined : 2);
 }
 function resetVhdlPanel() {
 	_lastAllVhdl = null;
@@ -339,7 +338,7 @@ function splitProject(ids, opts) {
 		activeId: topId,
 		openTabs: [topId],
 	};
-	const data = JSON.stringify(out, (k, v) => ["_net", "_nets", "_netW"].includes(k) ? undefined : v, 2);
+	const data = JSON.stringify(out, dropScratch, 2);
 	const b = new Blob([data], { type: "application/json" });
 	const u = URL.createObjectURL(b);
 	const a = document.createElement("a");

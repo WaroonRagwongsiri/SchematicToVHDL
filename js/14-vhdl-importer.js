@@ -286,20 +286,29 @@ function adoptSchematics(list, customs, target) {
 	// merge stamped customs first (collision → same rename pattern importCustomComponent
 	// uses) so CUSTOM: references below can be repointed at their live names
 	const nameMap = new Map();      // stamped custom name → live project name
+	const reused = new Set();       // already here with an identical definition
+	const same = (a, b) => JSON.stringify(a, dropScratch) === JSON.stringify(b, dropScratch);
 	if (customs) Object.values(customs).forEach(cc => {
 		if (!cc || !cc.name) return;
+		if (target.customs[cc.name] && same(target.customs[cc.name], cc)) {
+			nameMap.set(cc.name, cc.name); reused.add(cc.name); return;
+		}
 		let nm = cc.name, k = 1;
 		while (target.customs[nm]) nm = cc.name + "_" + (k++);
 		nameMap.set(cc.name, nm);
 	});
 	if (customs) Object.values(customs).forEach(cc => {
-		if (!cc || !cc.name) return;
-		const ncc = JSON.parse(JSON.stringify(cc));
+		if (!cc || !cc.name || reused.has(cc.name)) return;
+		const ncc = JSON.parse(JSON.stringify(cc, dropScratch));
 		ncc.name = nameMap.get(cc.name);
+		// a custom's own sheet can hold SCH: blocks too — those sheets are re-minted below
 		if (ncc.schematic) (ncc.schematic.components || []).forEach(c => {
-			if (c.type && c.type.startsWith("CUSTOM:")) {
+			if (typeof c.type !== "string") return;
+			if (c.type.startsWith("CUSTOM:")) {
 				const dep = c.type.slice(7);
 				if (nameMap.has(dep)) c.type = "CUSTOM:" + nameMap.get(dep);
+			} else if (c.type.startsWith("SCH:")) {
+				const t = idMap.get(c.type.slice(4)); if (t) c.type = "SCH:" + t;
 			}
 		});
 		target.customs[ncc.name] = ncc;
@@ -307,7 +316,7 @@ function adoptSchematics(list, customs, target) {
 	const added = [];
 	list.forEach(s => {
 		if (!s || !Array.isArray(s.components)) return;
-		const ns = JSON.parse(JSON.stringify(s));
+		const ns = JSON.parse(JSON.stringify(s, dropScratch));
 		ns.id = idMap.get(s.id) || uid("sch");
 		ns.name = uniqueSchName(s.name || "imported", ns.id, target);
 		const cmap = new Map();
@@ -344,6 +353,7 @@ function importVhdlFile() {
 				const stamp = readLayoutStamp(r.result);
 				if (stamp) {
 					const added = adoptSchematics(stamp.schematics, stamp.customs);
+					const nCustom = Object.values(stamp.customs || {}).filter(cc => cc && cc.name).length;
 					if (added.length) {
 						let want = null;
 						try {
@@ -356,7 +366,7 @@ function importVhdlFile() {
 						added.forEach(s => { if (!state.project.schOrder.includes(s.id)) state.project.schOrder.push(s.id); });
 						openSchTab(want.id); snapshot(); renderAll();
 						try { zoomFit(); } catch (_) { }
-						toast(`นำเข้าพร้อมการจัดวางเดิม — ${added.length} schematic, ${want.components.length} components`, "ok", 4200);
+						toast(`นำเข้าพร้อมการจัดวางเดิม — ${added.length} schematic${nCustom ? ", " + nCustom + " custom component" : ""}, ${want.components.length} components`, "ok", 4200);
 						return;
 					}
 				}

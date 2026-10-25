@@ -77,12 +77,30 @@ function generateAllVhdl() {
 	return out;
 }
 
+/* The generator hangs the names it allocates on the component objects themselves so
+   driver(), busSignalOf() and the port maps can find them again. Those fields are
+   SCRATCH — true only for the run that wrote them — and they used to outlive it: a
+   COPY carried them to the pasted component, and the layout stamp wrote them into the
+   exported .vhd. Pasted blocks whose sub-sheet had been deleted hit `Unknown type`
+   before _nets was reset and declared the clone's stale net names a second time. So
+   every run starts by wiping them, and nothing writes them to a file. */
+const NET_SCRATCH = ["_net", "_nets", "_netW", "_busSig", "_busNet", "_busW"];
+const dropScratch = (k, v) => NET_SCRATCH.indexOf(k) >= 0 ? undefined : v;
+function clearNetScratch(sch) {
+	(sch.components || []).forEach(c => { NET_SCRATCH.forEach(k => { delete c[k]; }); });
+}
+
 function generateSchVhdl(sch) {
 	const warns = [];
+	clearNetScratch(sch);          // never inherit another run's (or another copy's) names
 	const ename = sanId(sch.name) || "my_circuit";
 
-	const inputs = sch.components.filter(c => c.type === "IN");
-	const outputs = sch.components.filter(c => c.type === "OUT");
+	// the ENTITY lists its ports in the order the parent's COMPONENT declaration does,
+	// which comes from schPortList (top to bottom on the sheet)
+	const byPortOrder = schPortList(sch).map(p => p.cid);
+	const inSheetOrder = list => list.slice().sort((a, b) => byPortOrder.indexOf(a.id) - byPortOrder.indexOf(b.id));
+	const inputs = inSheetOrder(sch.components.filter(c => c.type === "IN"));
+	const outputs = inSheetOrder(sch.components.filter(c => c.type === "OUT"));
 	// CONST joins VCC/GND here: its output IS a literal, so allocating a signal for it
 	// would declare something nothing ever assigns
 	const inners = sch.components.filter(c => !["IN", "OUT", "VCC", "GND", "CONST"].includes(c.type));
@@ -90,8 +108,22 @@ function generateSchVhdl(sch) {
 	// assign net names
 	const used = {};
 	function uniq(b) { let n = sanId(b) || "net", i = 1; while (used[n]) n = sanId(b) + "_" + (i++); used[n] = 1; return n; }
+	// PORTS FIRST: a port name is what the parent wires to, so when a port and an
+	// instance label collide it is the (private) label that has to move
 	inputs.forEach(c => { c._net = uniq(c.params.name || "in"); });
 	outputs.forEach(c => { c._net = uniq(c.params.name || "out"); });
+	/* Instance labels share that declarative region, and `u_` + sanId(label) is not
+	   unique just because the LABEL is: `Adder 1` and `adder-1` both become `u_adder_1`,
+	   and an all-Thai label collapses to the fallback. So labels are allocated through
+	   the same `used` map and remembered for the emit site. An unlabelled block keeps
+	   `u_<i>_<cid>`; a block whose type is gone emits no instance and claims no name. */
+	const instLabel = new Map();
+	inners.forEach(c => {
+		if (!c.label) return;
+		if (!(c.type.indexOf("SCH:") === 0 || c.type.indexOf("CUSTOM:") === 0 || c.type === "TEMPBLOCK")) return;
+		if (!typeDef(c)) return;
+		instLabel.set(c.id, uniq("u_" + sanId(c.label)));
+	});
 	inners.forEach((c, i) => {
 		// every output port gets a signal (width recorded for the declaration)
 		const td = typeDef(c);
@@ -99,7 +131,6 @@ function generateSchVhdl(sch) {
 		c._nets = {};
 		c._netW = {};
 		if (c.type === "JUNCTION") {
-			delete c._busSig; delete c._busW;  // never reuse stale scratch from a prior run
 			// a floating-bus definition node (no upstream driver) becomes its own signal
 			if (c.params && c.params.busName && c.params.busWidth && !sch.wires.some(x => x.to.cid === c.id)) {
 				c._busSig = uniq(c.params.busName);
@@ -154,21 +185,6 @@ function generateSchVhdl(sch) {
 	// be processed before the BUSTAP taps that feed it. The pin's width is fixed by
 	// its own declaration (unlike an OUT marker's freely-inferred width), so it's
 	// recorded as a hard ceiling in fixedWidthOf for the merge-write step to clamp to.
-	const fixedWidthOf = {};   // sigName -> contractual width ceiling (sub-instance "in" pins only)
-	inners.forEach(c => {
-		if (c.type !== "BUSTAP" || c.params.mode !== "merge") return;
-		const target = resolveMergeTargetPin(c);
-		if (!target) return;                                    // unwired — main loop warns later
-		const { oc, pid } = target;
-		if (oc.type === "OUT" || oc.type === "JUNCTION") return; // already handled: _net / _busSig
-		const p = getPort(oc, pid);
-		if (!p || p.dir !== "in") return;
-		if (!oc._nets || oc._nets[pid]) return;                  // no bucket, or already allocated
-		oc._nets[pid] = uniq(`${sanId(oc.label || oc.type)}_${pid}_bus`);
-		oc._netW[pid] = p.width || 1;
-		fixedWidthOf[oc._nets[pid]] = p.width || 1;
-	});
-
 	// explicit wire names override — via uniq() so a duplicate name or a name
 	// colliding with a port never produces two identical signal declarations
 	const renamedPorts = new Set();
@@ -185,6 +201,57 @@ function generateSchVhdl(sch) {
 		}
 	});
 
+	const fixedWidthOf = {};   // sigName -> contractual width ceiling (sub-instance "in" pins only)
+	const busNets = [];        // merge-bus signals declared on their own (an OUTPUT's internal copy)
+	const outBusSig = new Map();   // OUTPUT id → the internal signal its bus really uses
+	const mergeSig = new Map();    // merge net key → the signal its taps write
+	inners.forEach(c => {
+		if (c.type !== "BUSTAP" || c.params.mode !== "merge") return;
+		const info = mergeBusInfo(sch, c);
+		if (!info || mergeSig.has(info.key)) return;            // unwired — main loop warns later
+		// with no destination port the taps themselves set the width, or the body would
+		// index a signal declared one bit wide
+		const width = info.width || info.tapWidth || 1;
+		let outPort = null;
+		info.net.forEach(id => {
+			const w = sch.wires.find(x => x.id === id); if (!w) return;
+			[w.from, w.to].forEach(ep => { const oc = comp(ep.cid, sch); if (oc && oc.type === "OUT") outPort = outPort || oc; });
+		});
+		let name = null;
+		if (outPort) {
+			/* AN OUTPUT PORT MAY BE WRITTEN BUT NEVER READ (Vivado: "cannot read from 'out'
+			   object"). Writing the taps straight into the port broke the moment anything
+			   else on the sheet read the same bus, so the bus gets its own signal and the
+			   port takes a copy; synthesis folds the alias away. */
+			name = uniq(outPort._net + "_i");
+			busNets.push({ name, w: width });
+			outBusSig.set(outPort.id, name);
+		} else {
+			const target = resolveMergeTargetPin(c);
+			if (target && target.oc.type !== "JUNCTION") {
+				const { oc, pid } = target;
+				const p = getPort(oc, pid);
+				if (p && oc._nets && oc._nets[pid]) name = oc._nets[pid];
+				else if (p && p.dir === "in" && oc._nets) {
+					oc._nets[pid] = uniq(`${sanId(oc.label || oc.type)}_${pid}_bus`);
+					oc._netW[pid] = p.width || 1;
+					fixedWidthOf[oc._nets[pid]] = p.width || 1;
+					name = oc._nets[pid];
+				}
+			}
+		}
+		if (!name) return;
+		mergeSig.set(info.key, name);
+		// hang it on the net's junctions so anything ELSE reading the bus finds it too
+		info.net.forEach(id => {
+			const w = sch.wires.find(x => x.id === id); if (!w) return;
+			[w.from, w.to].forEach(ep => {
+				const oc = comp(ep.cid, sch);
+				if (oc && oc.type === "JUNCTION" && !oc._busSig) { oc._busNet = name; oc._busW = width; }
+			});
+		});
+	});
+
 	// width-aware zero literal
 	const zlit = w => (w || 1) > 1 ? "(others => '0')" : "STD_LOGIC'('0')";
 
@@ -197,6 +264,15 @@ function generateSchVhdl(sch) {
 		if (!bits || !bits.size) return declaredWidth || 1;
 		return Math.max(declaredWidth || 1, Math.max(...bits) + 1);
 	}
+	/* A CONSTANT HAS NO WIDTH. '1' means "logic 1", not "a one-bit bus", so a VCC/GND
+	   rail (or a 1-bit CONST) wired to a wider pin means every bit of that pin — the
+	   `(others => '1')` idiom, written with its length spelled out so it is legal in
+	   every position, including a port map actual and an aggregate operand. */
+	const widenConst = (v, w) => {
+		if (!(w > 1) || typeof v !== "string") return v;
+		if (!/^'[01]'$/.test(v) && !/^STD_LOGIC'\('[01]'\)$/.test(v)) return v;
+		return `std_logic_vector'(${w - 1} downto 0 => ${v.match(/'[01]'/)[0]})`;
+	};
 
 	function driver(cid, pid, visited) {
 		visited = visited || new Set();
@@ -213,7 +289,9 @@ function generateSchVhdl(sch) {
 		if (src.type === "CONST") return constVhdl(src.params || {});
 		if (src.type === "JUNCTION") {
 			if (src._busSig) return src._busSig;                            // floating named bus
-			return driver(src.id, "j", visited);                          // transparent
+			// transparent — but with nothing upstream this may be a bus the merge taps
+			// assemble, which does have a signal even with no driving port
+			return driver(src.id, "j", visited) || src._busNet || null;
 		}
 		if (src._nets) return src._nets[w.from.pid] || null;
 		return null;
@@ -230,8 +308,10 @@ function generateSchVhdl(sch) {
 		const src = comp(w.from.cid, sch);
 		if (!src) return null;
 		if (src.type === "JUNCTION") {
-			if (src._busW) return src._busW;                               // floating named bus
-			return driverWidth(src.id, "j", visited);
+			if (src._busSig) return src._busW;                             // floating named bus
+			// a merge bus has no driving PORT, so walking upstream finds nothing and the
+			// bus used to measure 1 bit wide; the pre-pass stamped its real width here
+			return driverWidth(src.id, "j", visited) || src._busW || null;
 		}
 		const sp = getPort(src, w.from.pid);
 		return sp ? (sp.width || 1) : null;
@@ -241,30 +321,10 @@ function generateSchVhdl(sch) {
 	const subInstances = [];
 	const busMerges = [];        // "B(3) <= sig;" lines from merge taps
 	const busMergeBits = {};     // sigName -> Set of bit indices actually written by merge taps
-	/* The signal a merge tap writes into: follow its bus pin through the junctions to
-	   whatever real port sits on that net. An OUTPUT marker gives its own name. */
+	/* The signal a merge tap writes into, settled per net by the pre-pass above. */
 	function busSignalOf(tap) {
-		const seen = new Set();
-		const walk = cid => {
-			if (seen.has(cid)) return null;
-			seen.add(cid);
-			for (const w of sch.wires) {
-				const ends = [[w.from, w.to], [w.to, w.from]];
-				for (const [a, b] of ends) {
-					if (a.cid !== cid) continue;
-					const oc = comp(b.cid, sch);
-					if (!oc) continue;
-					if (oc.type === "JUNCTION") { const r = walk(oc.id); if (r) return r; }
-					else if (oc.type === "OUT") return oc._net;
-					else if (oc._nets && oc._nets[b.pid]) return oc._nets[b.pid];
-				}
-			}
-			return null;
-		};
-		const dw = sch.wires.find(w => w.to.cid === tap.id && w.to.pid === "d");
-		if (!dw) return null;
-		const j = comp(dw.from.cid, sch);
-		return j ? (j.type === "JUNCTION" ? walk(j.id) : (j._nets && j._nets[dw.from.pid]) || null) : null;
+		const info = mergeBusInfo(sch, tap);
+		return info ? (mergeSig.get(info.key) || null) : null;
 	}
 
 	inners.forEach(c => {
@@ -274,12 +334,12 @@ function generateSchVhdl(sch) {
 		const inputsPorts = portsArr.filter(p => p.dir === "in");
 		const driverFor = pid => {
 			const v = (c._nets && c._nets[pid]) || driver(c.id, pid);
+			const pw = (portsArr.find(p => p.id === pid) || {}).width || 1;
 			if (!v) {
-				const pw = (portsArr.find(p => p.id === pid) || {}).width || 1;
 				warns.push(`${compDisplay(c)} ขา '${pid}' ยังไม่ได้ต่อสาย — ใช้ค่า '0' แทน`);
 				return zlit(pw);
 			}
-			return v;
+			return widenConst(v, pw);
 		};
 		/* A driver string may be a LITERAL — from an unwired pin (zlit) or a GND/VCC/CONST
 		   tie-off. Two places must never receive one:
@@ -372,6 +432,9 @@ function generateSchVhdl(sch) {
 				const v = driverFor(p.id);
 				if (gw < 2) return v;
 				if (/^\(others\s*=>\s*'0'\)$/.test(v)) return `std_logic_vector'(${gw - 1} downto 0 => '0')`;
+				// driverFor() already widened a constant rail to the pin width — a second
+				// wrap would put a vector in the element position of the aggregate
+				if (/^std_logic_vector'\(/.test(v)) return v;
 				return (driverWidth(c.id, p.id) || 1) > 1 ? v : `std_logic_vector'(${gw - 1} downto 0 => ${v})`;
 			});
 			concurrent.push(`  ${c._nets.o} <= ${TYPES[c.type].expr(ins)};`);
@@ -427,8 +490,13 @@ function generateSchVhdl(sch) {
 				else if (!v) warns.push(`${compDisplay(c)} ยังไม่มีสัญญาณเข้าขาบิต`);
 				else {
 					const ceiling = fixedWidthOf[busSig];
+					// the bus has no driving port, so its width comes from the net itself;
+					// writing a bit it does not have is an out-of-range index
+					const bw = (mergeBusInfo(sch, c) || {}).width;
 					if (ceiling !== undefined && hi >= ceiling) {
 						warns.push(`${compDisplay(c)} บิต ${width > 1 ? `${hi}:${bit}` : bit} เกินความกว้างของขา '${busSig}' (0..${ceiling - 1}) — ไม่ถูกต่อ`);
+					} else if (bw && hi > bw - 1) {
+						warns.push(`${compDisplay(c)} แตะบิต ${width > 1 ? `${hi}:${bit}` : bit} แต่บัสมีแต่ (${bw - 1}:0)`);
 					} else {
 						const set = busMergeBits[busSig] || (busMergeBits[busSig] = new Set());
 						let dup = false;
@@ -437,7 +505,7 @@ function generateSchVhdl(sch) {
 							set.add(i);
 						}
 						if (dup) warns.push(`${compDisplay(c)} เขียนบิต ${width > 1 ? `${hi}:${bit}` : bit} ของ '${busSig}' ซ้ำกับ tap อื่น — จะกลายเป็น multiple driver`);
-						busMerges.push(width > 1 ? `  ${busSig}(${hi} downto ${bit}) <= ${v};` : `  ${busSig}(${bit}) <= ${v};`);
+						busMerges.push(width > 1 ? `  ${busSig}(${hi} downto ${bit}) <= ${widenConst(v, width)};` : `  ${busSig}(${bit}) <= ${v};`);
 					}
 				}
 				return;
@@ -661,7 +729,7 @@ function generateSchVhdl(sch) {
 				if (p.dir === "in") {
 					const v = c._nets[p.id] || driver(c.id, p.id);
 					if (!v) warns.push(`${compDisplay(c)} ขา '${p.label}' ยังไม่ได้ต่อสาย — ใช้ค่า '0' แทน`);
-					maps.push(`${p.label} => ${v || zlit(p.width)}`);
+					maps.push(`${p.label} => ${v ? widenConst(v, p.width || 1) : zlit(p.width)}`);
 				} else {
 					maps.push(`${p.label} => ${c._nets[p.id]}`);
 				}
@@ -679,7 +747,7 @@ function generateSchVhdl(sch) {
 				if (p.dir === "in") {
 					const v = c._nets[p.name] || driver(c.id, p.name);
 					if (!v) warns.push(`${compDisplay(c)} ขา '${p.name}' ยังไม่ได้ต่อสาย — ใช้ค่า '0' แทน`);
-					maps.push(`${p.name} => ${v || zlit(p.width)}`);
+					maps.push(`${p.name} => ${v ? widenConst(v, p.width || 1) : zlit(p.width)}`);
 				} else {
 					maps.push(`${p.name} => ${c._nets[p.name]}`);
 				}
@@ -696,7 +764,7 @@ function generateSchVhdl(sch) {
 				if (p.dir === "in") {
 					const v = c._nets[p.id] || driver(c.id, p.id);
 					if (!v) warns.push(`${compDisplay(c)} ขา '${p.id}' ยังไม่ได้ต่อสาย — ใช้ค่า '0' แทน`);
-					maps.push(`${p.id} => ${v || zlit(p.width)}`);
+					maps.push(`${p.id} => ${v ? widenConst(v, p.width || 1) : zlit(p.width)}`);
 				} else {
 					maps.push(`${p.id} => ${c._nets[p.id]}`);
 				}
@@ -711,11 +779,11 @@ function generateSchVhdl(sch) {
 	outputs.forEach(c => {
 		const v = driver(c.id, "i");
 		// a bus built up bit by bit by merge taps has no single driver — the taps ARE
-		// its drivers, so leaving it unassigned here is correct, not an omission
-		const byTaps = !!busMergeBits[c._net];
-		if (byTaps) return;
+		// its drivers. They write the bus's own signal, so the port takes a copy of it.
+		const viaBus = outBusSig.get(c.id);
+		if (viaBus && busMergeBits[viaBus]) { outLines.push(`  ${c._net} <= ${viaBus};`); return; }
 		if (!v) { warns.push(`OUTPUT '${c._net}' ยังไม่ได้ต่อสาย — ใช้ค่า '0' แทน`); outLines.push(`  ${c._net} <= ${zlit(c.params.width)};`); }
-		else outLines.push(`  ${c._net} <= ${v};`);
+		else outLines.push(`  ${c._net} <= ${widenConst(v, c.params.width || 1)};`);
 	});
 	busMerges.forEach(l => outLines.push(l));
 
@@ -734,7 +802,7 @@ function generateSchVhdl(sch) {
 		portDecls.push(`    ${c._net} : in  ${t}`);
 	});
 	outputs.forEach(c => {
-		const w = inferredWidth(c._net, c.params.width);
+		const w = inferredWidth(outBusSig.get(c.id) || c._net, c.params.width);
 		const t = w > 1 ? `STD_LOGIC_VECTOR(${w - 1} downto 0)` : "STD_LOGIC";
 		portDecls.push(`    ${c._net} : out ${t}`);
 	});
@@ -752,6 +820,7 @@ function generateSchVhdl(sch) {
 	// collect internal signals (scalars grouped, vectors declared individually)
 	const sigScalars = [];
 	const sigVectors = [];
+	busNets.forEach(b => { sigVectors.push({ name: b.name, w: inferredWidth(b.name, b.w) }); });
 	inners.forEach(c => {
 		if (c.type === "JUNCTION" && c._busSig) { sigVectors.push({ name: c._busSig, w: inferredWidth(c._busSig, c._busW) }); return; }
 		if (!c._nets) return;
@@ -828,10 +897,8 @@ function generateSchVhdl(sch) {
 	}
 	if (subInstances.length) {
 		code += `\n  -- sub-component instantiations\n`;
-		const usedInst = {};
-		function uniqInst(b) { let n = sanId(b) || "u", i = 1; while (usedInst[n]) n = sanId(b) + "_" + (i++); usedInst[n] = 1; return n; }
 		subInstances.forEach((si, idx) => {
-			const inst = si.label ? uniqInst(`u_${sanId(si.label)}`) : uniqInst(`u_${idx}_${si.inst}`);
+			const inst = instLabel.get(si.inst) || `u_${idx}_${si.inst}`;
 			// a port-less instance takes no port map clause — "port map ( )" is invalid
 			if (!si.maps.length) { code += `  ${inst} : ${si.entity};\n`; return; }
 			code += `  ${inst} : ${si.entity} port map (\n    ` +
@@ -953,7 +1020,8 @@ function layoutStamp() {
 	try {
 		const p = state.project;
 		const payload = { v: 1, schematics: Object.values(p.schematics), customs: p.customs || {}, topId: p.topId };
-		const b64 = utf8ToB64(JSON.stringify(payload));
+		// dropScratch, or every exported .vhd carries the net names of the last run
+		const b64 = utf8ToB64(JSON.stringify(payload, dropScratch));
 		return ["",
 			"-- ============================================================",
 			"-- Schematic Studio — ข้อมูลการจัดวางวงจร (layout)",

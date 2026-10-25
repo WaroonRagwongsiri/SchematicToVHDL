@@ -41,6 +41,116 @@ function focusComp(schId, cid) {
    is exactly why every counter and state machine is legal. Anything else passes the
    signal through combinationally. */
 const SEQ_TYPES = new Set(["DFF", "JKFF", "TFF", "SRFF"]);
+/* The sheet a SCH:/CUSTOM: block instantiates, or null for any other block (or a
+   reference whose sheet/custom has been deleted). */
+function subSheetOf(c) {
+	if (typeof c.type !== "string") return null;
+	if (c.type.indexOf("SCH:") === 0) return state.project.schematics[c.type.slice(4)] || null;
+	if (c.type.indexOf("CUSTOM:") === 0) return ((state.project.customs || {})[c.type.slice(7)] || {}).schematic || null;
+	return null;
+}
+/* The net a MERGE tap writes into: a stable key for grouping the taps that share one
+   bus, and its width — the widest REAL port on the net, since junctions and the taps
+   themselves carry no width of their own. The generator declares the bus signal by
+   the same rule, so the check and the emitted code cannot disagree. Needs no driving
+   port and no generation pass, so the synthesis check can use it on its own. */
+function mergeBusInfo(sch, tap) {
+	const dw = (sch.wires || []).find(w => (w.to.cid === tap.id && w.to.pid === "d")
+		|| (w.from.cid === tap.id && w.from.pid === "d"));
+	if (!dw) return null;
+	const net = netWires(sch, dw);
+	let width = 0, taps = 0;
+	net.forEach(id => {
+		const w = (sch.wires || []).find(x => x.id === id);
+		if (!w) return;
+		[w.from, w.to].forEach(ep => {
+			const oc = comp(ep.cid, sch);
+			if (!oc || oc.type === "JUNCTION") return;
+			if (oc.type === "BUSTAP") {
+				if ((oc.params || {}).mode === "merge" && ep.pid === "d")
+					taps = Math.max(taps, (oc.params.bit ?? 0) + Math.max(1, oc.params.width || 1));
+				return;
+			}
+			const p = getPort(oc, ep.pid);
+			if (p) width = Math.max(width, p.width || 1);
+		});
+	});
+	/* `width` is what the DESTINATION says; `tapWidth` is what the taps need. With no
+	   real port on the net — the destination deleted, the bus left dangling — there is
+	   nothing to compare against, so the bus takes the taps' own extent and the sheet
+	   is reported as having no destination. */
+	return { key: [...net].sort().join("|"), net, width: width || null, tapWidth: taps || null };
+}
+/* A sub-block is as opaque as a flip-flop when EVERY path from its inputs to EVERY
+   one of its outputs crosses a register — no combinational cycle can run through it.
+   Walk back from each OUT marker: a path that ends on a register, a constant rail or
+   nothing at all is registered; one that reaches an IN marker is not. A merge bus has
+   no driving wire — its taps are its drivers, which is exactly how a registered byte
+   leaves a sheet. Anything this walk cannot follow (an unknown type, a cycle inside
+   the sheet, a sub-block that is not itself fully registered) answers NO, so the only
+   effect of doubt is that a loop stays reported. Without this, `acc → alu → acc` was
+   a false combinational-loop error. */
+function sheetIsFullyRegistered(sch, memo, visiting) {
+	memo = memo || new Map();                  // keyed by the sheet OBJECT: a custom
+	visiting = visiting || new Set();           // component's schematic has no id
+	if (!sch) return false;
+	if (memo.has(sch)) return memo.get(sch);
+	if (visiting.has(sch)) return false;        // hierarchy cycle — reported on its own
+	visiting.add(sch);
+	const byId = {};
+	(sch.components || []).forEach(c => { byId[c.id] = c; });
+	const outs = (sch.components || []).filter(c => c.type === "OUT");
+	const done = new Map(), onStack = new Set();
+	const back = (cid, pid) => {
+		const key = cid + "." + pid;
+		if (done.has(key)) return done.get(key);   // shared fan-in, already settled
+		if (onStack.has(key)) return false;        // a cycle in here — make no claim
+		onStack.add(key);
+		const r = step(cid, pid);
+		onStack.delete(key); done.set(key, r);
+		return r;
+	};
+	// a merge bus has no driving wire: the MERGE taps on its net are its drivers
+	const viaMergeTaps = host => {
+		const net = netWires(sch, host);
+		const taps = (sch.components || []).filter(c => c.type === "BUSTAP"
+			&& (c.params || {}).mode === "merge"
+			&& (sch.wires || []).some(x => net.has(x.id)
+				&& ((x.from.cid === c.id && x.from.pid === "d") || (x.to.cid === c.id && x.to.pid === "d"))));
+		return taps.length ? taps.every(t => back(t.id, "y")) : null;
+	};
+	const step = (cid, pid) => {
+		const w = (sch.wires || []).find(x => x.to.cid === cid && x.to.pid === pid);
+		const src = w ? byId[w.from.cid] : null;
+		if (!src) {
+			const self = byId[cid];
+			if (self && (self.type === "JUNCTION" || self.type === "OUT")) {
+				const host = (sch.wires || []).find(x => x.from.cid === cid || x.to.cid === cid);
+				const r = host ? viaMergeTaps(host) : null;
+				if (r !== null) return r;
+			}
+			return true;                            // nothing arrives — reads as a constant
+		}
+		if (src.type === "BUSTAP" && (src.params || {}).mode === "merge" && w.from.pid === "d") {
+			const r = viaMergeTaps(w);
+			return r === null ? false : r;
+		}
+		if (src.type === "IN") return false;         // a live path from this sheet's own port
+		if (["VCC", "GND", "CONST"].includes(src.type)) return true;
+		if (src.type === "JUNCTION") return back(src.id, "j");
+		if (SEQ_TYPES.has(src.type)) return true;  // register boundary — the path stops here
+		if (src.type.indexOf("SCH:") === 0 || src.type.indexOf("CUSTOM:") === 0)
+			return sheetIsFullyRegistered(subSheetOf(src), memo, visiting);
+		const td = typeDef(src);
+		if (!td) return false;                     // unknown type — no claim
+		if (src.type === "BUSTAP") return back(src.id, "d");
+		return td.ports(src.params || {}).filter(p => p.dir === "in").every(p => back(src.id, p.id));
+	};
+	const ok = outs.length > 0 && outs.every(o => back(o.id, "i"));
+	visiting.delete(sch);
+	memo.set(sch, ok);
+	return ok;
+}
 /* Every combinational cycle in the sheet. A cycle with NO register in it is what
    Vivado kills at write_bitstream with "DRC LUTLP-1 combinational loops". */
 function combinationalLoops(sch) {
@@ -56,7 +166,13 @@ function combinationalLoops(sch) {
 		if (!s) return null;
 		return s.type === "JUNCTION" ? srcOf(s.id, "j", seen) : s;
 	};
-	const nodes = sch.components.filter(c => !["IN", "OUT", "VCC", "GND", "CONST", "JUNCTION"].includes(c.type) && !SEQ_TYPES.has(c.type));
+	/* A fully registered sub-block leaves the graph for the same reason a flip-flop does:
+	   nothing combinational passes through it, so no cycle through it is combinational. */
+	const regMemo = new Map();
+	const registeredBlock = c => (c.type.indexOf("SCH:") === 0 || c.type.indexOf("CUSTOM:") === 0)
+		&& sheetIsFullyRegistered(subSheetOf(c), regMemo);
+	const nodes = sch.components.filter(c => !["IN", "OUT", "VCC", "GND", "CONST", "JUNCTION"].includes(c.type)
+		&& !SEQ_TYPES.has(c.type) && !registeredBlock(c));
 	const idset = new Set(nodes.map(c => c.id));
 	const adj = new Map();
 	nodes.forEach(c => {
@@ -128,6 +244,31 @@ function runSynthesis() {
 					ref: sch.name, schId: sch.id, cid: c.id
 				});
 			}
+		});
+	});
+
+	/* A block whose sub-sheet (or custom component) has been DELETED still holds its
+	   wires and looks like part of the circuit — but the generator has no ports for it,
+	   so it emits no instance and the VHDL silently stops matching the drawing. A
+	   custom component's own sheet is emitted as an entity too, so it is scanned as
+	   well; it has no sheet tab to jump to, hence no schId/cid there. */
+	const deadScan = [];
+	Object.values(state.project.schematics).forEach(sch => { deadScan.push({ sch, ref: sch.name, jump: true }); });
+	Object.values(state.project.customs || {}).forEach(cc => {
+		if (cc && cc.schematic) deadScan.push({ sch: cc.schematic, ref: `custom component "${cc.name}"`, jump: false });
+	});
+	deadScan.forEach(({ sch, ref, jump }) => {
+		(sch.components || []).forEach(c => {
+			if (typeof c.type !== "string") return;
+			if (typeDef(c)) return;
+			const what = c.type.indexOf("SCH:") === 0 ? "schematic"
+				: c.type.indexOf("CUSTOM:") === 0 ? "custom component" : null;
+			const at = jump ? { schId: sch.id, cid: c.id } : {};
+			issues.push(Object.assign({ lvl: "err", ref }, at, {
+				msg: what
+					? `บล็อก '${c.label || c.id}' เรียก ${what} ที่ไม่มีอยู่แล้ว (อาจลบทิ้งไป) — บล็อกนี้ไม่ถูกวาดบนผัง และจะหายจาก VHDL ทั้งหมด คลิกบรรทัดนี้แล้วกด Delete เพื่อลบ หรือสร้าง ${what} กลับมา`
+					: `ไม่รู้จักอุปกรณ์ '${c.type}' — บล็อกนี้จะหายจาก VHDL ทั้งหมด`
+			}));
 		});
 	});
 
@@ -238,10 +379,16 @@ function runSynthesis() {
 				});
 				return;
 			}
-			// One bit into a WIDE gate is legal and deliberate: it is replicated across the
-			// bus (a select line masking a byte). Every other width difference is still an
-			// error — including a wide gate feeding a narrow sink.
-			if (fw === 1 && tw > 1 && ["AND", "OR", "NAND", "NOR", "XOR", "XNOR", "NOT", "BUF"].includes(tc.type)) return;
+			// Two ways a 1-bit driver legitimately feeds a wider pin:
+			//   · a CONSTANT RAIL (VCC / GND / a 1-bit CONST) — it has no width of its own,
+			//     so it means every bit of whatever it feeds;
+			//   · a 1-bit SIGNAL into a WIDE GATE — one select or enable line masking a bus.
+			// Everything else is still an error, including a wide driver into a narrow pin
+			// and a CONST whose DECLARED width disagrees with the pin.
+			const railSrc = src.c && (src.c.type === "VCC" || src.c.type === "GND"
+				|| (src.c.type === "CONST" && constWidth(src.c.params || {}) === 1));
+			if (fw === 1 && tw > 1 &&
+				(railSrc || ["AND", "OR", "NAND", "NOR", "XOR", "XNOR", "NOT", "BUF"].includes(tc.type))) return;
 			if (fw !== tw) {
 				issues.push({
 					lvl: "err",
@@ -249,6 +396,79 @@ function runSynthesis() {
 					ref: sch.name, schId: sch.id, cid: tc.id
 				});
 			}
+		});
+
+		/* A `component add` declaration HIDES an entity port also named `add`, so the
+		   generator renames the port to `add_1` — but the caller's component declaration,
+		   port map and drawn pins all come from schPortList() and keep `add`, so Vivado
+		   rejects both sides. Nothing can fix that silently, so report it like any other
+		   name clash: one rename and everything agrees again. */
+		{
+			const subNames = new Map();
+			(sch.components || []).forEach(c => {
+				if (typeof c.type !== "string") return;
+				if (c.type.indexOf("SCH:") === 0) {
+					const s = state.project.schematics[c.type.slice(4)];
+					if (s) subNames.set(sanId(s.name), s.name);
+				} else if (c.type.indexOf("CUSTOM:") === 0) {
+					const cc = (state.project.customs || {})[c.type.slice(7)];
+					if (cc) subNames.set(sanId(cc.name), cc.name);
+				}
+			});
+			if (subNames.size) schPortList(sch).forEach(p => {
+				if (!subNames.has(p.id)) return;
+				issues.push({
+					lvl: "err", ref: sch.name, schId: sch.id, cid: p.cid,
+					msg: `พอร์ต '${p.id}' ชื่อเดียวกันกับ '${subNames.get(p.id)}' ที่เรียกใช้ในแผ่นนี้ — ใน VHDL ชื่อนี้จะกลายเป็น component ทับชื่อพอร์ต โปรแกรมจะเปลี่ยนพอร์ตเป็น '${p.id}_1' ให้เอง แต่แผ่นที่เรียกแผ่นนี้ยังเรียก '${p.id}' — Vivado จะ error ทั้งสองฝั่ง ให้เปลี่ยนชื่อพอร์ต`
+				});
+			});
+		}
+
+		/* MERGE taps: the width loop above reaches its bus-tap errors through traceSrc(),
+		   which walks upstream for a driving port — a merge bus has none (the taps are
+		   its drivers), so merge taps escaped the range check. Narrowing the destination
+		   port after the taps were stamped is all it takes. Two taps on one bit are two
+		   concurrent drivers; a bus with no real port on it has no destination at all. */
+		const mergeNets = new Map();
+		(sch.components || []).filter(c => c.type === "BUSTAP" && (c.params || {}).mode === "merge").forEach(tap => {
+			const info = mergeBusInfo(sch, tap);
+			if (!info) return;
+			if (!mergeNets.has(info.key))
+				mergeNets.set(info.key, { w: info.width, dangling: !info.width, taps: [] });
+			mergeNets.get(info.key).taps.push(tap);
+		});
+		mergeNets.forEach(({ w, taps, dangling }) => {
+			if (dangling) {
+				issues.push({
+					lvl: "err", ref: sch.name, schId: sch.id, cid: taps[0].id,
+					msg: `สายบัสที่ Bus Tap ${taps.length} ตัวรวมบิตเข้าไม่มีปลายทาง — ไม่มีพอร์ตหรือขาของบล็อกใดอยู่บนสายนี้เลย (ปลายทางอาจถูกลบไป) บิตทั้งหมดจะไม่มีอะไรอ่าน`
+				});
+			}
+			const claimed = new Map();                       // bit → the tap that took it
+			taps.forEach(tap => {
+				const bit = tap.params.bit ?? 0;
+				const width = Math.max(1, tap.params.width || 1);
+				const hi = bit + width - 1;
+				const range = width > 1 ? `${hi}:${bit}` : `${bit}`;
+				if (w && hi > w - 1) {
+					issues.push({
+						lvl: "err", ref: sch.name, schId: sch.id, cid: tap.id,
+						msg: `${compDisplay(tap)} แตะบิต ${range} แต่บัสที่รวมเข้ากว้างแค่ (${w - 1}:0) — VHDL จะอ้างบิตเกินขอบเขต Vivado จะ error`
+					});
+					return;
+				}
+				for (let b = bit; b <= hi; b++) {
+					const first = claimed.get(b);
+					if (first) {
+						issues.push({
+							lvl: "err", ref: sch.name, schId: sch.id, cid: tap.id,
+							msg: `${compDisplay(tap)} แตะบิต ${range} ทับกับ ${compDisplay(first)} — บิต ${b} จะมีตัวขับสองตัว (driver ชนกัน)`
+						});
+						break;
+					}
+					claimed.set(b, tap);
+				}
+			});
 		});
 
 		// what really drives a pin, looking through junctions

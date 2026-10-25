@@ -157,7 +157,7 @@ function exportCustomComponent(name) {
 		customs: { [name]: cc }
 	};
 	deps.forEach(n => { if (state.project.customs[n]) pkg.customs[n] = state.project.customs[n]; });
-	const data = JSON.stringify(pkg, null, 2);
+	const data = JSON.stringify(pkg, dropScratch, 2);
 	const b = new Blob([data], { type: "application/json" });
 	const u = URL.createObjectURL(b);
 	const a = document.createElement("a");
@@ -253,7 +253,7 @@ function exportActiveAsCustom() {
 		type: "schstudio-custom-pkg", version: 1, root: cc.name,
 		customs: { [cc.name]: cc }
 	};
-	const b = new Blob([JSON.stringify(pkg, null, 2)], { type: "application/json" });
+	const b = new Blob([JSON.stringify(pkg, dropScratch, 2)], { type: "application/json" });
 	const u = URL.createObjectURL(b);
 	const a = document.createElement("a");
 	a.href = u; a.download = sanId(cc.name) + ".sccomp.json"; a.click();
